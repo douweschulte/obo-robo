@@ -1,0 +1,8 @@
+[package]
+name = "obo-test"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+mzcv = {path="../mzcore/mzcv"}
+mzcore = {path="../mzcore/mzcore"}
