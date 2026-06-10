@@ -154,7 +154,7 @@ fn write_end<W: Write>(
     Ok(())
 }
 
-// TODO: figure out which characters to escape, as this depends on context
+// TODO: figure out which characters to escape, as this depends on context, check stuff like: MS:1000541 and UO:0000268
 fn escape<W: Write>(mut writer: W, text: &str) -> Result<(), std::io::Error> {
     for c in text.chars() {
         if ['[', ']', '{', '}', '!', '\"', '\\'].contains(&c) {
