@@ -1,4 +1,10 @@
-use std::{collections::HashSet, io::Write};
+mod obo_writer;
+
+use std::{
+    collections::HashSet,
+    fs::File,
+    io::{BufWriter, Write},
+};
 
 use mzcore::sequence::CrossId;
 use mzcv::{OboOntology, OboStanzaType, SynonymScope};
@@ -8,11 +14,19 @@ fn main() {
         .skip(1)
         .next()
         .unwrap_or("/home/douwe/Downloads/psi-ms(1).obo".to_string());
-    let file = OboOntology::from_file(path).unwrap();
+    let file = OboOntology::from_file(&path).unwrap();
     let mut answer = String::new();
     println!("{} objects", file.objects.len());
 
     validate(&file);
+
+    obo_writer::write(
+        BufWriter::new(
+            File::create(std::path::PathBuf::from(path).with_extension(".new.obo")).unwrap(),
+        ),
+        &file,
+    )
+    .unwrap();
 
     loop {
         answer.clear();

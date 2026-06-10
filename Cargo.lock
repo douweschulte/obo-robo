@@ -405,6 +405,7 @@ dependencies = [
 name = "obo-test"
 version = "0.1.0"
 dependencies = [
+ "itertools",
  "mzcore",
  "mzcv",
 ]
