@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use std::io::Write;
 
-use mzcv::{OboOntology, OboStanzaType, RelationType};
+use mzcv::{OboOntology, OboStanza, OboStanzaType, RelationType};
 
 // TODO: escape all written values (e.g. regular expression names)
 pub fn write<W: Write>(mut writer: W, obo: &OboOntology) -> Result<(), std::io::Error> {
@@ -26,92 +26,101 @@ pub fn write<W: Write>(mut writer: W, obo: &OboOntology) -> Result<(), std::io::
         }
     }
 
-    for obj in &obo.objects {
+    for object in &obo.objects {
         writeln!(writer)?;
-        writeln!(
-            writer,
-            "[{}]",
-            match obj.stanza_type {
-                OboStanzaType::Typedef => "Typedef",
-                OboStanzaType::Term => "Term",
-                OboStanzaType::Instance => "Instance",
-            }
-        )?;
-        writeln!(writer, "id: {}", obj.id)?;
-        if let Some((_, names)) = obj
-            .lines
-            .iter()
-            .find(|(t, ..)| t.eq_ignore_ascii_case("name"))
-        {
-            write!(writer, "name: ")?;
-            escape(&mut writer, &names[0].0, None)?;
-            writeln!(writer)?;
-        }
-        if let Some((def, cross_ids, modifiers, comment)) = &obj.definition {
-            write!(writer, "def: \"")?;
-            escape(&mut writer, def, Some('\"'))?;
-            write!(writer, "\" ")?;
-            write_cross_ids(&mut writer, cross_ids)?;
-            write_end(&mut writer, modifiers, comment)?;
-            writeln!(writer)?;
-        }
-        for synonym in obj.synonyms.iter().sorted_by_key(|s| &s.synonym) {
-            write!(
-                writer,
-                "synonym: \"{}\" {} ",
-                synonym.synonym,
-                synonym.scope.to_string().to_ascii_uppercase()
-            )?;
-            if let Some(type_name) = &synonym.type_name {
-                write!(writer, "{type_name} ")?;
-            }
-            write_cross_ids(&mut writer, &synonym.cross_references)?;
-            write_end(&mut writer, &synonym.trailing_modifiers, &synonym.comment)?;
-            writeln!(writer)?;
-        }
-        for (key, values) in obj.property_values.iter().sorted_by_key(|(k, _)| *k) {
-            for (value, modifiers, comment) in values {
-                write!(
-                    writer,
-                    "property_value: {key}: \"{value}\" xsd:{}",
-                    value.datatype()
-                )?;
-                write_end(&mut writer, modifiers, comment)?;
-                writeln!(writer)?;
-            }
-        }
-        for (xref, modifiers, comment) in obj.xref.iter().sorted_by_key(|x| &x.0) {
-            write!(writer, "xref: {xref}")?;
-            write_end(&mut writer, modifiers, comment)?;
-            writeln!(writer)?;
-        }
-        for (kind, xref, modifiers, comment) in obj
-            .relationship
-            .iter()
-            .sorted_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
-        {
-            match kind {
-                RelationType::IsA => write!(writer, "is_a: {xref}")?,
-                RelationType::Other(t) => write!(writer, "relationship: {t} {xref}")?,
-            }
-            write_end(&mut writer, modifiers, comment)?;
-            writeln!(writer)?;
-        }
-        if obj.obsolete {
-            writeln!(writer, "is_obsolete: true")?;
-        }
-        for (kind, lines) in obj.lines.iter().sorted_by_key(|(k, _)| *k) {
-            if kind.eq_ignore_ascii_case("name") {
-                continue;
-            }
-            for (value, modifiers, comment) in lines.iter().sorted_by_key(|l| &l.0) {
-                write!(writer, "{kind}: {value}")?;
-                write_end(&mut writer, modifiers, comment)?;
-                writeln!(writer)?;
-            }
-        }
+        write_object(&mut writer, object)?;
     }
 
+    Ok(())
+}
+
+pub fn write_object<W: Write>(mut writer: W, object: &OboStanza) -> Result<(), std::io::Error> {
+    writeln!(
+        writer,
+        "[{}]",
+        match object.stanza_type {
+            OboStanzaType::Typedef => "Typedef",
+            OboStanzaType::Term => "Term",
+            OboStanzaType::Instance => "Instance",
+        }
+    )?;
+    writeln!(writer, "id: {}", object.id)?;
+    if let Some((_, names)) = object
+        .lines
+        .iter()
+        .find(|(t, ..)| t.eq_ignore_ascii_case("name"))
+    {
+        write!(writer, "name: ")?;
+        escape(&mut writer, &names[0].0, None)?;
+        writeln!(writer)?;
+    }
+    if let Some((def, cross_ids, modifiers, comment)) = &object.definition {
+        write!(writer, "def: \"")?;
+        escape(&mut writer, def, Some('\"'))?;
+        write!(writer, "\" ")?;
+        write_cross_ids(&mut writer, cross_ids)?;
+        write_end(&mut writer, modifiers, comment.as_deref())?;
+        writeln!(writer)?;
+    }
+    for synonym in object.synonyms.iter().sorted_by_key(|s| &s.synonym) {
+        write!(
+            writer,
+            "synonym: \"{}\" {} ",
+            synonym.synonym,
+            synonym.scope.to_string().to_ascii_uppercase()
+        )?;
+        if let Some(type_name) = &synonym.type_name {
+            write!(writer, "{type_name} ")?;
+        }
+        write_cross_ids(&mut writer, &synonym.cross_references)?;
+        write_end(
+            &mut writer,
+            &synonym.trailing_modifiers,
+            synonym.comment.as_deref(),
+        )?;
+        writeln!(writer)?;
+    }
+    for (key, values) in object.property_values.iter().sorted_by_key(|(k, _)| *k) {
+        for (value, modifiers, comment) in values {
+            write!(
+                writer,
+                "property_value: {key}: \"{value}\" xsd:{}",
+                value.datatype()
+            )?;
+            write_end(&mut writer, modifiers, comment.as_deref())?;
+            writeln!(writer)?;
+        }
+    }
+    for (xref, modifiers, comment) in object.xref.iter().sorted_by_key(|x| &x.0) {
+        write!(writer, "xref: {xref}")?;
+        write_end(&mut writer, modifiers, comment.as_deref())?;
+        writeln!(writer)?;
+    }
+    for (kind, xref, modifiers, comment) in object
+        .relationship
+        .iter()
+        .sorted_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
+    {
+        match kind {
+            RelationType::IsA => write!(writer, "is_a: {xref}")?,
+            RelationType::Other(t) => write!(writer, "relationship: {t} {xref}")?,
+        }
+        write_end(&mut writer, modifiers, comment.as_deref())?;
+        writeln!(writer)?;
+    }
+    if object.obsolete {
+        writeln!(writer, "is_obsolete: true")?;
+    }
+    for (kind, lines) in object.lines.iter().sorted_by_key(|(k, _)| *k) {
+        if kind.eq_ignore_ascii_case("name") {
+            continue;
+        }
+        for (value, modifiers, comment) in lines.iter().sorted_by_key(|l| &l.0) {
+            write!(writer, "{kind}: {value}")?;
+            write_end(&mut writer, modifiers, comment.as_deref())?;
+            writeln!(writer)?;
+        }
+    }
     Ok(())
 }
 
@@ -142,7 +151,7 @@ fn write_cross_ids<W: Write>(
 fn write_end<W: Write>(
     mut writer: W,
     trailing_modifiers: &[(Box<str>, Box<str>)],
-    comment: &Option<Box<str>>,
+    comment: Option<&str>,
 ) -> Result<(), std::io::Error> {
     if !trailing_modifiers.is_empty() {
         write!(writer, " {{")?;

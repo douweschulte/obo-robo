@@ -1,3 +1,4 @@
+//! Test and validate and format Obo files
 mod obo_writer;
 
 use std::{
@@ -9,10 +10,12 @@ use std::{
 use mzcore::sequence::CrossId;
 use mzcv::{OboOntology, OboStanzaType, RelationType, SynonymScope};
 
+use crate::obo_writer::write_object;
+
 fn main() {
     let path = std::env::args()
         .nth(1)
-        .unwrap_or("/home/douwe/Downloads/psi-ms(1).obo".to_string());
+        .unwrap_or_else(|| "/home/douwe/Downloads/psi-ms(1).obo".to_string());
     let file = OboOntology::from_file(&path).unwrap();
     let mut answer = String::new();
     println!("{} objects", file.objects.len());
@@ -39,8 +42,13 @@ fn main() {
         }
 
         for obj in &file.objects {
-            if obj.lines["name"][0].0.trim().eq_ignore_ascii_case(a) {
-                println!("{obj:#?}")
+            if obj.lines["name"][0].0.trim().eq_ignore_ascii_case(a)
+                || obj
+                    .synonyms
+                    .iter()
+                    .any(|s| s.synonym.eq_ignore_ascii_case(a))
+            {
+                write_object(std::io::stdout(), obj).unwrap();
             }
         }
     }
@@ -56,6 +64,7 @@ fn validate(ontology: &OboOntology) {
         if !ids.insert(obj.id.clone()) {
             warnings.push((obj.id.clone(), "Duplicate ID".to_string()));
         }
+
         // Check for duplicate names
         if let Some(name) = obj.lines.get("name") {
             if name.len() != 1 {
@@ -67,6 +76,8 @@ fn validate(ontology: &OboOntology) {
         } else {
             warnings.push((obj.id.clone(), "No name defined".to_string()));
         }
+
+        // Validate that the cross-ids are valid and written properly
         if let Some((_def, cross_ids, _, _)) = &obj.definition {
             for id in cross_ids {
                 let full = format!(
@@ -74,7 +85,7 @@ fn validate(ontology: &OboOntology) {
                     id.0.as_ref().map_or(String::new(), |n| format!("{n}:")),
                     id.1
                 );
-                if let Ok(id) = mzcore::sequence::CrossId::try_from(id.clone()) {
+                if let Ok(id) = CrossId::try_from(id.clone()) {
                     if let CrossId::Other(o) = &id
                         && o.contains(':')
                     {
@@ -86,16 +97,17 @@ fn validate(ontology: &OboOntology) {
                     {
                         warnings.push((
                             obj.id.clone(),
-                            format!("Suspicious cross-id: '{full}', cleaned is: '{id}'"),
+                            format!("Not normalised cross-id: '{full}', cleaned is: '{id}'"),
                         ));
                     }
                 } else {
-                    warnings.push((obj.id.clone(), format!("Invalid cross-id type: {full}",)));
+                    warnings.push((obj.id.clone(), format!("Invalid cross-id type: {full}")));
                 }
             }
         } else {
             warnings.push((obj.id.clone(), "No definition".to_string()));
         }
+
         // Check for duplicate synonyms
         for synonym in &obj.synonyms {
             if synonym.scope != SynonymScope::Exact {
@@ -104,10 +116,11 @@ fn validate(ontology: &OboOntology) {
             if !names.insert(synonym.synonym.as_ref()) {
                 warnings.push((
                     obj.id.clone(),
-                    format!("Duplicate synonym: {}", synonym.synonym),
+                    format!("Duplicate exact synonym: {}", synonym.synonym),
                 ));
             }
         }
+
         // Validate the lines are actually valid Obo lines
         if obj.stanza_type == OboStanzaType::Term {
             for line in obj.lines.keys() {
@@ -148,7 +161,7 @@ fn validate(ontology: &OboOntology) {
                 {
                     warnings.push((
                     obj.id.clone(),
-                    format!("This relationship comments looks suspicious: name is '{}' comment is '{comment}'", relation.lines["name"][0].0),
+                    format!("This relationship comment looks suspicious: name is '{}' comment is '{comment}'", relation.lines["name"][0].0),
                 ));
                 }
             } else {
