@@ -81,7 +81,7 @@ pub fn write_object<W: Write>(mut writer: W, object: &OboStanza) -> Result<(), s
         writeln!(writer)?;
     }
     for (key, values) in object.property_values.iter().sorted_by_key(|(k, _)| *k) {
-        for (value, modifiers, comment) in values {
+        for (value, modifiers, comment) in values.iter().sorted() {
             write!(
                 writer,
                 "property_value: {key}: \"{value}\" xsd:{}",

@@ -57,6 +57,7 @@ fn main() {
 fn validate(ontology: &OboOntology) {
     let mut warnings = Vec::new();
     let mut names = HashSet::new();
+    let mut definitions = HashSet::new();
     let mut ids = HashSet::new();
 
     for obj in &ontology.objects {
@@ -71,14 +72,19 @@ fn validate(ontology: &OboOntology) {
                 warnings.push((obj.id.clone(), "Too many names defined".to_string()));
             }
             if !names.insert(name[0].0.as_ref()) {
-                warnings.push((obj.id.clone(), "Duplicate ID".to_string()));
+                warnings.push((obj.id.clone(), format!("Duplicate name: '{}'", name[0].0)));
             }
         } else {
             warnings.push((obj.id.clone(), "No name defined".to_string()));
         }
 
-        // Validate that the cross-ids are valid and written properly
-        if let Some((_def, cross_ids, _, _)) = &obj.definition {
+        if let Some((def, cross_ids, _, _)) = &obj.definition {
+            // Check for duplicate definitions
+            if !definitions.insert(def.as_ref()) {
+                warnings.push((obj.id.clone(), format!("Duplicate definition: '{def}'")));
+            }
+
+            // Validate that the cross-ids are valid and written properly
             for id in cross_ids {
                 let full = format!(
                     "{}{}",
@@ -116,7 +122,7 @@ fn validate(ontology: &OboOntology) {
             if !names.insert(synonym.synonym.as_ref()) {
                 warnings.push((
                     obj.id.clone(),
-                    format!("Duplicate exact synonym: {}", synonym.synonym),
+                    format!("Duplicate exact synonym: '{}'", synonym.synonym),
                 ));
             }
         }
@@ -150,25 +156,59 @@ fn validate(ontology: &OboOntology) {
         }
 
         // Check for suspicious comments
+        let mut parent_stack = Vec::new();
         for (t, rel, _, comment) in &obj.relationship {
             if rel.0.as_ref().is_some_and(|t| t.as_ref() == "xsd") {
                 continue;
             }
             if let Some(relation) = ontology.objects.iter().find(|o| o.id == *rel) {
-                if *t == RelationType::IsA
-                    && let Some(comment) = comment
-                    && *comment != relation.lines["name"][0].0
-                {
-                    warnings.push((
-                    obj.id.clone(),
-                    format!("This relationship comment looks suspicious: name is '{}' comment is '{comment}'", relation.lines["name"][0].0),
-                ));
+                if *t == RelationType::IsA {
+                    if let Some(comment) = comment
+                        && *comment != relation.lines["name"][0].0
+                    {
+                        warnings.push((
+                            obj.id.clone(),
+                            format!("This relationship comment looks suspicious: name is '{}' comment is '{comment}'", relation.lines["name"][0].0),
+                        ));
+                    }
+                    parent_stack.push(relation);
                 }
             } else {
                 warnings.push((
                     obj.id.clone(),
                     format!("Referenced relation does not exist in this file: {rel}"),
                 ));
+            }
+        }
+
+        // Check for duplicated inherited values
+        while let Some(ancestor) = parent_stack.pop() {
+            for (key, values) in &ancestor.property_values {
+                if let Some(own_values) = obj.property_values.get(key) {
+                    for own_value in own_values {
+                        if values.iter().any(|v| v.0 == own_value.0) {
+                            warnings.push((
+                                obj.id.clone(),
+                                format!("Overwrote an ancestral property value with the same value: '{}' from ancestor: {}", own_value.0, ancestor.id),
+                            ));
+                        }
+                    }
+                }
+            }
+            for (id, _, _) in &ancestor.xref {
+                if obj.xref.iter().any(|v| v.0 == *id) {
+                    warnings.push((
+                        obj.id.clone(),
+                        format!("Overwrote an ancestral xref with the same value: '{}' from ancestor: {}", id, ancestor.id),
+                    ));
+                }
+            }
+            for (t, rel, _, _) in &ancestor.relationship {
+                if *t == RelationType::IsA
+                    && let Some(relation) = ontology.objects.iter().find(|o| o.id == *rel)
+                {
+                    parent_stack.push(relation);
+                }
             }
         }
     }
