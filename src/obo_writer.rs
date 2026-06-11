@@ -51,8 +51,8 @@ pub fn write<W: Write>(mut writer: W, obo: &OboOntology) -> Result<(), std::io::
             write!(writer, "def: \"")?;
             escape(&mut writer, def, Some('\"'))?;
             write!(writer, "\" ")?;
-            write_cross_ids(&mut writer, &cross_ids)?;
-            write_end(&mut writer, &modifiers, &comment)?;
+            write_cross_ids(&mut writer, cross_ids)?;
+            write_end(&mut writer, modifiers, comment)?;
             writeln!(writer)?;
         }
         for synonym in obj.synonyms.iter().sorted_by_key(|s| &s.synonym) {
@@ -76,13 +76,13 @@ pub fn write<W: Write>(mut writer: W, obo: &OboOntology) -> Result<(), std::io::
                     "property_value: {key}: \"{value}\" xsd:{}",
                     value.datatype()
                 )?;
-                write_end(&mut writer, &modifiers, &comment)?;
+                write_end(&mut writer, modifiers, comment)?;
                 writeln!(writer)?;
             }
         }
         for (xref, modifiers, comment) in obj.xref.iter().sorted_by_key(|x| &x.0) {
             write!(writer, "xref: {xref}")?;
-            write_end(&mut writer, &modifiers, &comment)?;
+            write_end(&mut writer, modifiers, comment)?;
             writeln!(writer)?;
         }
         for (kind, xref, modifiers, comment) in obj
@@ -94,7 +94,7 @@ pub fn write<W: Write>(mut writer: W, obo: &OboOntology) -> Result<(), std::io::
                 RelationType::IsA => write!(writer, "is_a: {xref}")?,
                 RelationType::Other(t) => write!(writer, "relationship: {t} {xref}")?,
             }
-            write_end(&mut writer, &modifiers, &comment)?;
+            write_end(&mut writer, modifiers, comment)?;
             writeln!(writer)?;
         }
         if obj.obsolete {
@@ -106,7 +106,7 @@ pub fn write<W: Write>(mut writer: W, obo: &OboOntology) -> Result<(), std::io::
             }
             for (value, modifiers, comment) in lines.iter().sorted_by_key(|l| &l.0) {
                 write!(writer, "{kind}: {value}")?;
-                write_end(&mut writer, &modifiers, &comment)?;
+                write_end(&mut writer, modifiers, comment)?;
                 writeln!(writer)?;
             }
         }

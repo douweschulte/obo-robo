@@ -11,8 +11,7 @@ use mzcv::{OboOntology, OboStanzaType, RelationType, SynonymScope};
 
 fn main() {
     let path = std::env::args()
-        .skip(1)
-        .next()
+        .nth(1)
         .unwrap_or("/home/douwe/Downloads/psi-ms(1).obo".to_string());
     let file = OboOntology::from_file(&path).unwrap();
     let mut answer = String::new();
@@ -22,7 +21,7 @@ fn main() {
 
     obo_writer::write(
         BufWriter::new(
-            File::create(std::path::PathBuf::from(path).with_extension(".new.obo")).unwrap(),
+            File::create(std::path::PathBuf::from(path).with_extension("new.obo")).unwrap(),
         ),
         &file,
     )
