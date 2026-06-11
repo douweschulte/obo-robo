@@ -44,16 +44,18 @@ pub fn write<W: Write>(mut writer: W, obo: &OboOntology) -> Result<(), std::io::
             .find(|(t, ..)| t.eq_ignore_ascii_case("name"))
         {
             write!(writer, "name: ")?;
-            escape(&mut writer, &names[0].0)?;
+            escape(&mut writer, &names[0].0, None)?;
             writeln!(writer)?;
         }
         if let Some((def, cross_ids, modifiers, comment)) = &obj.definition {
-            write!(writer, "def: \"{def}\" ")?;
+            write!(writer, "def: \"")?;
+            escape(&mut writer, def, Some('\"'))?;
+            write!(writer, "\" ")?;
             write_cross_ids(&mut writer, &cross_ids)?;
             write_end(&mut writer, &modifiers, &comment)?;
             writeln!(writer)?;
         }
-        for synonym in &obj.synonyms {
+        for synonym in obj.synonyms.iter().sorted_by_key(|s| &s.synonym) {
             write!(
                 writer,
                 "synonym: \"{}\" {} ",
@@ -78,12 +80,16 @@ pub fn write<W: Write>(mut writer: W, obo: &OboOntology) -> Result<(), std::io::
                 writeln!(writer)?;
             }
         }
-        for (xref, modifiers, comment) in &obj.xref {
+        for (xref, modifiers, comment) in obj.xref.iter().sorted_by_key(|x| &x.0) {
             write!(writer, "xref: {xref}")?;
             write_end(&mut writer, &modifiers, &comment)?;
             writeln!(writer)?;
         }
-        for (kind, xref, modifiers, comment) in &obj.relationship {
+        for (kind, xref, modifiers, comment) in obj
+            .relationship
+            .iter()
+            .sorted_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
+        {
             match kind {
                 RelationType::IsA => write!(writer, "is_a: {xref}")?,
                 RelationType::Other(t) => write!(writer, "relationship: {t} {xref}")?,
@@ -98,7 +104,7 @@ pub fn write<W: Write>(mut writer: W, obo: &OboOntology) -> Result<(), std::io::
             if kind.eq_ignore_ascii_case("name") {
                 continue;
             }
-            for (value, modifiers, comment) in lines {
+            for (value, modifiers, comment) in lines.iter().sorted_by_key(|l| &l.0) {
                 write!(writer, "{kind}: {value}")?;
                 write_end(&mut writer, &modifiers, &comment)?;
                 writeln!(writer)?;
@@ -115,7 +121,10 @@ fn write_cross_ids<W: Write>(
 ) -> Result<(), std::io::Error> {
     write!(writer, "[")?;
     let mut first = true;
-    for (tag, value) in cross_ids {
+    for (tag, value) in cross_ids
+        .iter()
+        .sorted_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
+    {
         if first {
             first = false;
         } else {
@@ -154,11 +163,20 @@ fn write_end<W: Write>(
     Ok(())
 }
 
-// TODO: figure out which characters to escape, as this depends on context, check stuff like: MS:1000541 and UO:0000268
-fn escape<W: Write>(mut writer: W, text: &str) -> Result<(), std::io::Error> {
+// TODO: figure out which characters to escape, as this depends on context, check stuff like: UO:0000268
+fn escape<W: Write>(
+    mut writer: W,
+    text: &str,
+    enclosed: Option<char>,
+) -> Result<(), std::io::Error> {
     for c in text.chars() {
-        if ['[', ']', '{', '}', '!', '\"', '\\'].contains(&c) {
-            write!(writer, "\\")?;
+        match (c, enclosed) {
+            ('\\', _)
+            | ('!', None)
+            | ('[' | ']', Some('['))
+            | ('{' | '}', Some('{'))
+            | ('\"', Some('\"')) => write!(writer, "\\")?,
+            _ => (),
         }
         write!(writer, "{c}")?;
     }

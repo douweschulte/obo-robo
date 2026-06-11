@@ -7,7 +7,7 @@ use std::{
 };
 
 use mzcore::sequence::CrossId;
-use mzcv::{OboOntology, OboStanzaType, SynonymScope};
+use mzcv::{OboOntology, OboStanzaType, RelationType, SynonymScope};
 
 fn main() {
     let path = std::env::args()
@@ -53,9 +53,11 @@ fn validate(ontology: &OboOntology) {
     let mut ids = HashSet::new();
 
     for obj in &ontology.objects {
+        // Check for duplicate IDs
         if !ids.insert(obj.id.clone()) {
             warnings.push((obj.id.clone(), "Duplicate ID".to_string()));
         }
+        // Check for duplicate names
         if let Some(name) = obj.lines.get("name") {
             if name.len() != 1 {
                 warnings.push((obj.id.clone(), "Too many names defined".to_string()));
@@ -80,10 +82,7 @@ fn validate(ontology: &OboOntology) {
                         warnings.push((obj.id.clone(), format!("Unknown cross-id: {o}")));
                     } else if !matches!(
                         id,
-                        CrossId::URL(_, _)
-                            | CrossId::ChemicalBook(_)
-                            | CrossId::ChemSpider(_)
-                            | CrossId::PubChem(_)
+                        CrossId::URL(_, _) | CrossId::ChemicalBook(_) | CrossId::ChemSpider(_)
                     ) && id.to_string() != full
                     {
                         warnings.push((
@@ -98,6 +97,7 @@ fn validate(ontology: &OboOntology) {
         } else {
             warnings.push((obj.id.clone(), "No definition".to_string()));
         }
+        // Check for duplicate synonyms
         for synonym in &obj.synonyms {
             if synonym.scope != SynonymScope::Exact {
                 continue;
@@ -109,6 +109,7 @@ fn validate(ontology: &OboOntology) {
                 ));
             }
         }
+        // Validate the lines are actually valid Obo lines
         if obj.stanza_type == OboStanzaType::Term {
             for line in obj.lines.keys() {
                 if ![
@@ -133,6 +134,29 @@ fn validate(ontology: &OboOntology) {
                 {
                     warnings.push((obj.id.clone(), format!("Invalid line type: {line}")));
                 }
+            }
+        }
+
+        // Check for suspicious comments
+        for (t, rel, _, comment) in &obj.relationship {
+            if rel.0.as_ref().is_some_and(|t| t.as_ref() == "xsd") {
+                continue;
+            }
+            if let Some(relation) = ontology.objects.iter().find(|o| o.id == *rel) {
+                if *t == RelationType::IsA
+                    && let Some(comment) = comment
+                    && *comment != relation.lines["name"][0].0
+                {
+                    warnings.push((
+                    obj.id.clone(),
+                    format!("This relationship comments looks suspicious: name is '{}' comment is '{comment}'", relation.lines["name"][0].0),
+                ));
+                }
+            } else {
+                warnings.push((
+                    obj.id.clone(),
+                    format!("Referenced relation does not exist in this file: {rel}"),
+                ));
             }
         }
     }
