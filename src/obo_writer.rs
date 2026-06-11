@@ -1,7 +1,9 @@
 use itertools::Itertools;
-use std::io::Write;
+use std::{collections::HashMap, io::Write};
 
-use mzcv::{OboOntology, OboStanza, OboStanzaType, RelationType};
+use mzcv::{
+    OboIdentifier, OboOntology, OboStanza, OboStanzaType, OboSynonym, OboValue, RelationType,
+};
 
 // TODO: escape all written values (e.g. regular expression names)
 pub fn write<W: Write>(mut writer: W, obo: &OboOntology) -> Result<(), std::io::Error> {
@@ -44,25 +46,272 @@ pub fn write_object<W: Write>(mut writer: W, object: &OboStanza) -> Result<(), s
             OboStanzaType::Instance => "Instance",
         }
     )?;
+    match object.stanza_type {
+        OboStanzaType::Typedef => write_typedef(&mut writer, object),
+        OboStanzaType::Term => write_term(&mut writer, object),
+        OboStanzaType::Instance => write_instance(&mut writer, object),
+    }
+}
+
+fn write_term<W: Write>(writer: &mut W, object: &OboStanza) -> Result<(), std::io::Error> {
     writeln!(writer, "id: {}", object.id)?;
-    if let Some((_, names)) = object
-        .lines
-        .iter()
-        .find(|(t, ..)| t.eq_ignore_ascii_case("name"))
-    {
-        write!(writer, "name: ")?;
-        escape(&mut writer, &names[0].0, None)?;
-        writeln!(writer)?;
+    write_lines(writer, &object.lines, "is_anonymous")?;
+    write_lines(writer, &object.lines, "name")?;
+    write_lines(writer, &object.lines, "namespace")?;
+    write_lines(writer, &object.lines, "alt_id")?;
+    write_def(writer, &object.definition)?;
+    write_lines(writer, &object.lines, "comment")?;
+    write_lines(writer, &object.lines, "subset")?;
+    write_synonyms(writer, &object.synonyms)?;
+    write_xref(writer, &object.xref)?;
+    write_lines(writer, &object.lines, "builtin")?;
+    write_property_value(writer, &object.property_values)?;
+    write_is_a(writer, &object.relationship)?;
+    write_lines(writer, &object.lines, "intersection_of")?;
+    write_lines(writer, &object.lines, "union_of")?;
+    write_lines(writer, &object.lines, "equivalent_to")?;
+    write_lines(writer, &object.lines, "disjoint_from")?;
+    write_relationship(writer, &object.relationship)?;
+    write_lines(writer, &object.lines, "created_by")?;
+    write_lines(writer, &object.lines, "creation_date")?;
+    if object.obsolete {
+        writeln!(writer, "is_obsolete: true")?;
     }
-    if let Some((def, cross_ids, modifiers, comment)) = &object.definition {
+    write_lines(writer, &object.lines, "replaced_by")?;
+    write_lines(writer, &object.lines, "consider")?;
+    for (kind, lines) in object.lines.iter().sorted_by_key(|(k, _)| *k) {
+        if [
+            "id",
+            "is_anonymous",
+            "name",
+            "namespace",
+            "alt_id",
+            "def",
+            "comment",
+            "subset",
+            "synonym",
+            "xref",
+            "builtin",
+            "property_value",
+            "is_a",
+            "intersection_of",
+            "union_of",
+            "equivalent_to",
+            "disjoint_from",
+            "relationship",
+            "created_by",
+            "creation_date",
+            "is_obsolete",
+            "replaced_by",
+            "consider ",
+        ]
+        .contains(&kind.as_ref())
+        {
+            continue;
+        }
+        for (value, modifiers, comment) in lines.iter().sorted_by_key(|l| &l.0) {
+            write!(writer, "{kind}: {value}")?;
+            write_end(writer, modifiers, comment.as_deref())?;
+            writeln!(writer)?;
+        }
+    }
+    Ok(())
+}
+
+fn write_typedef<W: Write>(writer: &mut W, object: &OboStanza) -> Result<(), std::io::Error> {
+    writeln!(writer, "id: {}", object.id)?;
+    write_lines(writer, &object.lines, "is_anonymous")?;
+    write_lines(writer, &object.lines, "name")?;
+    write_lines(writer, &object.lines, "namespace")?;
+    write_lines(writer, &object.lines, "alt_id")?;
+    write_def(writer, &object.definition)?;
+    write_lines(writer, &object.lines, "comment")?;
+    write_lines(writer, &object.lines, "subset")?;
+    write_synonyms(writer, &object.synonyms)?;
+    write_xref(writer, &object.xref)?;
+    write_property_value(writer, &object.property_values)?;
+    write_lines(writer, &object.lines, "domain")?;
+    write_lines(writer, &object.lines, "range")?;
+    write_lines(writer, &object.lines, "builtin")?;
+    write_lines(writer, &object.lines, "holds_over_chain")?;
+    write_lines(writer, &object.lines, "is_anti_symmetric")?;
+    write_lines(writer, &object.lines, "is_cyclic")?;
+    write_lines(writer, &object.lines, "is_reflexive")?;
+    write_lines(writer, &object.lines, "is_symmetric")?;
+    write_lines(writer, &object.lines, "is_transitive")?;
+    write_lines(writer, &object.lines, "is_functional")?;
+    write_lines(writer, &object.lines, "is_inverse_functional")?;
+    write_is_a(writer, &object.relationship)?;
+    write_lines(writer, &object.lines, "intersection_of")?;
+    write_lines(writer, &object.lines, "union_of")?;
+    write_lines(writer, &object.lines, "equivalent_to")?;
+    write_lines(writer, &object.lines, "disjoint_from")?;
+    write_lines(writer, &object.lines, "inverse_of")?;
+    write_lines(writer, &object.lines, "transitive_over")?;
+    write_lines(writer, &object.lines, "equivalent_to_chain")?;
+    write_lines(writer, &object.lines, "disjoint_over")?;
+    write_relationship(writer, &object.relationship)?;
+    if object.obsolete {
+        writeln!(writer, "is_obsolete: true")?;
+    }
+    write_lines(writer, &object.lines, "created_by")?;
+    write_lines(writer, &object.lines, "creation_date")?;
+    write_lines(writer, &object.lines, "replaced_by")?;
+    write_lines(writer, &object.lines, "consider")?;
+    write_lines(writer, &object.lines, "expand_assertion_to")?;
+    write_lines(writer, &object.lines, "expand_expression_to")?;
+    write_lines(writer, &object.lines, "is_metadata_tag")?;
+    write_lines(writer, &object.lines, "is_class_level")?;
+    for (kind, lines) in object.lines.iter().sorted_by_key(|(k, _)| *k) {
+        if [
+            "id",
+            "is_anonymous",
+            "name",
+            "namespace",
+            "alt_id",
+            "def",
+            "comment",
+            "subset",
+            "synonym",
+            "xref",
+            "property_value",
+            "domain",
+            "range",
+            "builtin",
+            "holds_over_chain",
+            "is_anti_symmetric",
+            "is_cyclic",
+            "is_reflexive",
+            "is_symmetric",
+            "is_transitive",
+            "is_functional",
+            "is_inverse_functional",
+            "is_a",
+            "intersection_of",
+            "union_of",
+            "equivalent_to",
+            "disjoint_from",
+            "inverse_of",
+            "transitive_over",
+            "equivalent_to_chain",
+            "disjoint_over",
+            "relationship",
+            "is_obsolete",
+            "created_by",
+            "creation_date",
+            "replaced_by",
+            "consider",
+            "expand_assertion_to",
+            "expand_expression_to",
+            "is_metadata_tag",
+            "is_class_level ",
+        ]
+        .contains(&kind.as_ref())
+        {
+            continue;
+        }
+        for (value, modifiers, comment) in lines.iter().sorted_by_key(|l| &l.0) {
+            write!(writer, "{kind}: {value}")?;
+            write_end(writer, modifiers, comment.as_deref())?;
+            writeln!(writer)?;
+        }
+    }
+    Ok(())
+}
+
+fn write_instance<W: Write>(writer: &mut W, object: &OboStanza) -> Result<(), std::io::Error> {
+    writeln!(writer, "id: {}", object.id)?;
+    write_lines(writer, &object.lines, "is_anonymous")?;
+    write_lines(writer, &object.lines, "name")?;
+    write_lines(writer, &object.lines, "namespace")?;
+    write_lines(writer, &object.lines, "alt_id")?;
+    write_def(writer, &object.definition)?;
+    write_lines(writer, &object.lines, "comment")?;
+    write_lines(writer, &object.lines, "subset")?;
+    write_synonyms(writer, &object.synonyms)?;
+    write_xref(writer, &object.xref)?;
+    write_lines(writer, &object.lines, "instance_of")?;
+    write_property_value(writer, &object.property_values)?;
+    write_is_a(writer, &object.relationship)?;
+    write_relationship(writer, &object.relationship)?;
+    write_lines(writer, &object.lines, "created_by")?;
+    write_lines(writer, &object.lines, "creation_date")?;
+    if object.obsolete {
+        writeln!(writer, "is_obsolete: true")?;
+    }
+    write_lines(writer, &object.lines, "replaced_by")?;
+    write_lines(writer, &object.lines, "consider")?;
+    for (kind, lines) in object.lines.iter().sorted_by_key(|(k, _)| *k) {
+        if [
+            "id",
+            "is_anonymous",
+            "name",
+            "namespace",
+            "alt_id",
+            "def",
+            "comment",
+            "subset",
+            "synonym",
+            "xref",
+            "instance_of",
+            "property_value",
+            "relationship",
+            "created_by",
+            "creation_date",
+            "is_obsolete",
+            "replaced_by",
+            "consider ",
+        ]
+        .contains(&kind.as_ref())
+        {
+            continue;
+        }
+        for (value, modifiers, comment) in lines.iter().sorted_by_key(|l| &l.0) {
+            write!(writer, "{kind}: {value}")?;
+            write_end(writer, modifiers, comment.as_deref())?;
+            writeln!(writer)?;
+        }
+    }
+    Ok(())
+}
+
+fn write_lines<W: Write>(
+    writer: &mut W,
+    lines: &HashMap<Box<str>, Vec<(Box<str>, Vec<(Box<str>, Box<str>)>, Option<Box<str>>)>>,
+    key: &str,
+) -> Result<(), std::io::Error> {
+    if let Some(values) = lines.get(key) {
+        for (value, modifiers, comment) in values.iter().sorted_by_key(|l| &l.0) {
+            write!(writer, "{key}: {value}")?;
+            write_end(writer, modifiers, comment.as_deref())?;
+            writeln!(writer)?;
+        }
+    }
+    Ok(())
+}
+
+fn write_def<W: Write>(
+    writer: &mut W,
+    def: &Option<(
+        Box<str>,
+        Vec<(Option<Box<str>>, Box<str>)>,
+        Vec<(Box<str>, Box<str>)>,
+        Option<Box<str>>,
+    )>,
+) -> Result<(), std::io::Error> {
+    if let Some((def, cross_ids, modifiers, comment)) = def {
         write!(writer, "def: \"")?;
-        escape(&mut writer, def, Some('\"'))?;
+        escape(writer, def, Some('\"'))?;
         write!(writer, "\" ")?;
-        write_cross_ids(&mut writer, cross_ids)?;
-        write_end(&mut writer, modifiers, comment.as_deref())?;
+        write_cross_ids(writer, cross_ids)?;
+        write_end(writer, modifiers, comment.as_deref())?;
         writeln!(writer)?;
     }
-    for synonym in object.synonyms.iter().sorted_by_key(|s| &s.synonym) {
+    Ok(())
+}
+
+fn write_synonyms<W: Write>(writer: &mut W, synonyms: &[OboSynonym]) -> Result<(), std::io::Error> {
+    for synonym in synonyms.iter().sorted_by_key(|s| &s.synonym) {
         write!(
             writer,
             "synonym: \"{}\" {} ",
@@ -72,60 +321,100 @@ pub fn write_object<W: Write>(mut writer: W, object: &OboStanza) -> Result<(), s
         if let Some(type_name) = &synonym.type_name {
             write!(writer, "{type_name} ")?;
         }
-        write_cross_ids(&mut writer, &synonym.cross_references)?;
+        write_cross_ids(writer, &synonym.cross_references)?;
         write_end(
-            &mut writer,
+            writer,
             &synonym.trailing_modifiers,
             synonym.comment.as_deref(),
         )?;
         writeln!(writer)?;
     }
-    for (key, values) in object.property_values.iter().sorted_by_key(|(k, _)| *k) {
+    Ok(())
+}
+
+fn write_xref<W: Write>(
+    writer: &mut W,
+    xref: &[(OboIdentifier, Vec<(Box<str>, Box<str>)>, Option<Box<str>>)],
+) -> Result<(), std::io::Error> {
+    for (xref, modifiers, comment) in xref.iter().sorted_by_key(|x| &x.0) {
+        write!(writer, "xref: {xref}")?;
+        write_end(writer, modifiers, comment.as_deref())?;
+        writeln!(writer)?;
+    }
+    Ok(())
+}
+
+fn write_property_value<W: Write>(
+    writer: &mut W,
+    property_values: &HashMap<
+        Box<str>,
+        Vec<(OboValue, Vec<(Box<str>, Box<str>)>, Option<Box<str>>)>,
+    >,
+) -> Result<(), std::io::Error> {
+    for (key, values) in property_values.iter().sorted_by_key(|(k, _)| *k) {
         for (value, modifiers, comment) in values.iter().sorted() {
             write!(
                 writer,
                 "property_value: {key}: \"{value}\" xsd:{}",
                 value.datatype()
             )?;
-            write_end(&mut writer, modifiers, comment.as_deref())?;
-            writeln!(writer)?;
-        }
-    }
-    for (xref, modifiers, comment) in object.xref.iter().sorted_by_key(|x| &x.0) {
-        write!(writer, "xref: {xref}")?;
-        write_end(&mut writer, modifiers, comment.as_deref())?;
-        writeln!(writer)?;
-    }
-    for (kind, xref, modifiers, comment) in object
-        .relationship
-        .iter()
-        .sorted_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
-    {
-        match kind {
-            RelationType::IsA => write!(writer, "is_a: {xref}")?,
-            RelationType::Other(t) => write!(writer, "relationship: {t} {xref}")?,
-        }
-        write_end(&mut writer, modifiers, comment.as_deref())?;
-        writeln!(writer)?;
-    }
-    if object.obsolete {
-        writeln!(writer, "is_obsolete: true")?;
-    }
-    for (kind, lines) in object.lines.iter().sorted_by_key(|(k, _)| *k) {
-        if kind.eq_ignore_ascii_case("name") {
-            continue;
-        }
-        for (value, modifiers, comment) in lines.iter().sorted_by_key(|l| &l.0) {
-            write!(writer, "{kind}: {value}")?;
-            write_end(&mut writer, modifiers, comment.as_deref())?;
+            write_end(writer, modifiers, comment.as_deref())?;
             writeln!(writer)?;
         }
     }
     Ok(())
 }
 
+fn write_is_a<W: Write>(
+    writer: &mut W,
+    relationships: &[(
+        RelationType,
+        OboIdentifier,
+        Vec<(Box<str>, Box<str>)>,
+        Option<Box<str>>,
+    )],
+) -> Result<(), std::io::Error> {
+    for (_, xref, modifiers, comment) in relationships
+        .iter()
+        .filter(|a| a.0 == RelationType::IsA)
+        .sorted_by(|a, b| a.1.cmp(&b.1))
+    {
+        write!(writer, "is_a: {xref}")?;
+        write_end(writer, modifiers, comment.as_deref())?;
+        writeln!(writer)?;
+    }
+    Ok(())
+}
+
+fn write_relationship<W: Write>(
+    writer: &mut W,
+    relationships: &[(
+        RelationType,
+        OboIdentifier,
+        Vec<(Box<str>, Box<str>)>,
+        Option<Box<str>>,
+    )],
+) -> Result<(), std::io::Error> {
+    for (kind, xref, modifiers, comment) in relationships
+        .iter()
+        .filter_map(|a| {
+            if let RelationType::Other(t) = &a.0 {
+                Some((t, &a.1, &a.2, &a.3))
+            } else {
+                None
+            }
+        })
+        .sorted_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
+    {
+        write!(writer, "relationship: {kind} {xref}")?;
+        write_end(writer, modifiers, comment.as_deref())?;
+        writeln!(writer)?;
+    }
+    Ok(())
+}
+
 fn write_cross_ids<W: Write>(
-    mut writer: W,
+    writer: &mut W,
     cross_ids: &[(Option<Box<str>>, Box<str>)],
 ) -> Result<(), std::io::Error> {
     write!(writer, "[")?;
@@ -149,7 +438,7 @@ fn write_cross_ids<W: Write>(
 }
 
 fn write_end<W: Write>(
-    mut writer: W,
+    writer: &mut W,
     trailing_modifiers: &[(Box<str>, Box<str>)],
     comment: Option<&str>,
 ) -> Result<(), std::io::Error> {
@@ -174,7 +463,7 @@ fn write_end<W: Write>(
 
 // TODO: figure out which characters to escape, as this depends on context, check stuff like: UO:0000268
 fn escape<W: Write>(
-    mut writer: W,
+    writer: &mut W,
     text: &str,
     enclosed: Option<char>,
 ) -> Result<(), std::io::Error> {
