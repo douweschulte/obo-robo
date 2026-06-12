@@ -1,5 +1,5 @@
 [package]
-name = "obo-test"
+name = "psi-obo-helper"
 version = "0.1.0"
 edition = "2024"
 

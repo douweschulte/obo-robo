@@ -7,6 +7,7 @@ use std::{
     collections::HashSet,
     fs::File,
     io::{BufWriter, Write},
+    process::ExitCode,
 };
 
 use mzcore::sequence::CrossId;
@@ -21,16 +22,16 @@ enum Action {
     Search,
 }
 
-fn main() -> Result<(), usize> {
+fn main() -> ExitCode {
     let Some(action) = std::env::args().nth(1) else {
         eprintln!(
             "An action should be given as first argument, any of 'lint', 'fmt', 'fix', or 'search'"
         );
-        return Err(1);
+        return 1.into();
     };
     let Some(path) = std::env::args().nth(2) else {
         eprintln!("A path should be given as second argument");
-        return Err(2);
+        return 2.into();
     };
 
     let action = match action.as_str() {
@@ -45,7 +46,7 @@ fn main() -> Result<(), usize> {
             println!(" 'fmt' - Formats the Obo file with generic rules");
             println!(" 'fix' - Fix ontology specific rules and formats the Obo file");
             println!(" 'search' - Load an Obo file to search in it interactively");
-            return Ok(());
+            return 0.into();
         }
     };
 
@@ -53,24 +54,26 @@ fn main() -> Result<(), usize> {
         Ok(value) => value,
         Err(err) => {
             eprintln!("{}", err);
-            return Err(3);
+            return 3.into();
         }
     };
 
     match action {
-        Action::Lint => validate(&file),
+        Action::Lint => {
+            let _ = validate(&file);
+        }
         Action::Fmt => fmt(&file, &path),
         Action::Fix => {
             let mut error = false;
             if let Err(errs) = fix(&mut file) {
                 for err in errs {
-                    eprintln!("{err}");
+                    eprintln!("::error::{err}");
                     error = true;
                 }
             }
             fmt(&file, &path);
             if error {
-                return Err(4);
+                return 5.into();
             }
         }
         Action::Search => {
@@ -105,15 +108,12 @@ fn main() -> Result<(), usize> {
             }
         }
     }
-
-    Ok(())
+    0.into()
 }
 
 fn fmt(ontology: &OboOntology, path: &str) {
     obo_writer::write(
-        BufWriter::new(
-            File::create(std::path::PathBuf::from(path).with_extension("new.obo")).unwrap(),
-        ),
+        BufWriter::new(File::create(path).unwrap()),
         &ontology,
         &OboFormattingOptions {
             format_xref_as_property_value: ontology
@@ -125,7 +125,7 @@ fn fmt(ontology: &OboOntology, path: &str) {
     .unwrap()
 }
 
-fn validate(ontology: &OboOntology) {
+fn validate(ontology: &OboOntology) -> bool {
     let mut warnings = Vec::new();
     let mut names = HashSet::new();
     let mut definitions = HashSet::new();
@@ -284,9 +284,14 @@ fn validate(ontology: &OboOntology) {
         }
     }
 
-    for (id, warning) in warnings {
-        println!("{id}: {warning}");
+    if !warnings.is_empty() {
+        println!("::warning::Some potential problems where detected")
     }
+    for (id, warning) in &warnings {
+        println!("::notice::{id}: {warning}");
+    }
+
+    warnings.is_empty()
 }
 
 fn fix(ontology: &mut OboOntology) -> Result<(), Vec<String>> {
