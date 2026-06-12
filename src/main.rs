@@ -1,4 +1,6 @@
 //! Test and validate and format Obo files
+mod fix_psi_mod;
+mod fix_xlmod;
 mod obo_writer;
 
 use std::{
@@ -7,51 +9,120 @@ use std::{
     io::{BufWriter, Write},
 };
 
-use mzcore::{chemistry::MolecularFormula, sequence::CrossId};
-use mzcv::{OboOntology, OboStanzaType, OboValue, RelationType, SynonymScope};
+use mzcore::sequence::CrossId;
+use mzcv::{OboOntology, OboStanzaType, RelationType, SynonymScope};
 
-use crate::obo_writer::write_object;
+use crate::obo_writer::{OboFormattingOptions, write_object};
 
-fn main() {
-    let path = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "/home/douwe/Downloads/psi-ms(1).obo".to_string());
-    let mut file = OboOntology::from_file(&path).unwrap();
-    let mut answer = String::new();
-    println!("{} objects", file.objects.len());
+enum Action {
+    Lint,
+    Fmt,
+    Fix,
+    Search,
+}
 
-    validate(&file);
-    fix(&mut file).unwrap();
+fn main() -> Result<(), usize> {
+    let Some(action) = std::env::args().nth(1) else {
+        eprintln!(
+            "An action should be given as first argument, any of 'lint', 'fmt', 'fix', or 'search'"
+        );
+        return Err(1);
+    };
+    let Some(path) = std::env::args().nth(2) else {
+        eprintln!("A path should be given as second argument");
+        return Err(2);
+    };
+
+    let action = match action.as_str() {
+        "lint" => Action::Lint,
+        "fmt" => Action::Fmt,
+        "fix" => Action::Fix,
+        "search" => Action::Search,
+        _ => {
+            println!("Usage: <action> <path>");
+            println!("Use any of 'lint', 'fmt', 'fix', or 'search' as action");
+            println!(" 'lint' - Shows general Obo errors about the file");
+            println!(" 'fmt' - Formats the Obo file with generic rules");
+            println!(" 'fix' - Fix ontology specific rules and formats the Obo file");
+            println!(" 'search' - Load an Obo file to search in it interactively");
+            return Ok(());
+        }
+    };
+
+    let mut file = match OboOntology::from_file(&path) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("{}", err);
+            return Err(3);
+        }
+    };
+
+    match action {
+        Action::Lint => validate(&file),
+        Action::Fmt => fmt(&file, &path),
+        Action::Fix => {
+            let mut error = false;
+            if let Err(errs) = fix(&mut file) {
+                for err in errs {
+                    eprintln!("{err}");
+                    error = true;
+                }
+            }
+            fmt(&file, &path);
+            if error {
+                return Err(4);
+            }
+        }
+        Action::Search => {
+            println!(
+                "Version: {}, Objects: {}",
+                file.version().version.unwrap_or_default(),
+                file.objects.len()
+            );
+            let mut answer = String::new();
+            loop {
+                answer.clear();
+                print!(">");
+                std::io::stdout().flush().unwrap();
+                std::io::stdin().read_line(&mut answer).unwrap();
+
+                let a = answer.trim();
+                if a.eq_ignore_ascii_case("quit") || a.eq_ignore_ascii_case("q") {
+                    break;
+                }
+
+                for obj in &file.objects {
+                    if obj.lines["name"][0].0.trim().eq_ignore_ascii_case(a)
+                        || obj
+                            .synonyms
+                            .iter()
+                            .any(|s| s.synonym.eq_ignore_ascii_case(a))
+                    {
+                        write_object(std::io::stdout(), obj, &OboFormattingOptions::default())
+                            .unwrap();
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn fmt(ontology: &OboOntology, path: &str) {
     obo_writer::write(
         BufWriter::new(
             File::create(std::path::PathBuf::from(path).with_extension("new.obo")).unwrap(),
         ),
-        &file,
+        &ontology,
+        &OboFormattingOptions {
+            format_xref_as_property_value: ontology
+                .headers
+                .iter()
+                .any(|h| h.0.as_ref() == "ontology" && h.1.as_ref() == "mod"),
+        },
     )
-    .unwrap();
-
-    loop {
-        answer.clear();
-        print!(">");
-        std::io::stdout().flush().unwrap();
-        std::io::stdin().read_line(&mut answer).unwrap();
-
-        let a = answer.trim();
-        if a.eq_ignore_ascii_case("quit") || a.eq_ignore_ascii_case("q") {
-            break;
-        }
-
-        for obj in &file.objects {
-            if obj.lines["name"][0].0.trim().eq_ignore_ascii_case(a)
-                || obj
-                    .synonyms
-                    .iter()
-                    .any(|s| s.synonym.eq_ignore_ascii_case(a))
-            {
-                write_object(std::io::stdout(), obj).unwrap();
-            }
-        }
-    }
+    .unwrap()
 }
 
 fn validate(ontology: &OboOntology) {
@@ -219,109 +290,13 @@ fn validate(ontology: &OboOntology) {
 }
 
 fn fix(ontology: &mut OboOntology) -> Result<(), Vec<String>> {
-    if !ontology
-        .headers
-        .iter()
-        .any(|h| h.0.as_ref() == "ontology" && h.1.as_ref() == "xlmod")
-    {
-        return Ok(());
+    if let Some((_, name, _, _)) = ontology.headers.iter().find(|h| h.0.as_ref() == "ontology") {
+        match name.as_ref() {
+            "xlmod" => fix_xlmod::fix_xlmod(ontology),
+            "mod" => fix_psi_mod::fix_psi_mod(ontology),
+            _ => Ok(()),
+        }
+    } else {
+        Ok(())
     }
-
-    let mut errors = Vec::new();
-    for obj in &mut ontology.objects {
-        if obj.stanza_type != OboStanzaType::Term {
-            continue;
-        }
-
-        let formula_key = if obj.property_values.contains_key("bridgeFormula") {
-            "bridgeFormula"
-        } else {
-            "deadEndFormula"
-        };
-
-        if let Some(entry) = obj.property_values.get_mut(formula_key) {
-            if entry.len() != 1 {
-                errors.push(format!(
-                    "{}: Too many {formula_key}s, can only have 1",
-                    obj.id
-                ));
-            }
-            match MolecularFormula::xlmod(&entry[0].0.to_string()) {
-                Ok(formula) => {
-                    entry[0].0 = OboValue::String(
-                        formula
-                            .hill_notation_xlmod()
-                            .expect("Charged or additional mass in formula in XLMOD"),
-                    );
-
-                    obj.property_values.insert(
-                        "monoIsotopicMass".into(),
-                        vec![(
-                            OboValue::Float(formula.monoisotopic_mass().value, "double", Some(6)),
-                            Vec::new(),
-                            None,
-                        )],
-                    );
-                }
-                Err(err) => errors.push(format!("{}: Invalid {formula_key}: {}", obj.id, err)),
-            }
-        }
-
-        if let Some(entries) = obj.property_values.get_mut("neutralLossFormula") {
-            for entry in entries {
-                match MolecularFormula::xlmod(&entry.0.to_string()) {
-                    Ok(formula) => {
-                        entry.0 = OboValue::String(
-                            formula
-                                .hill_notation_xlmod()
-                                .expect("Charged or additional mass in formula in XLMOD"),
-                        );
-                    }
-                    Err(err) => {
-                        errors.push(format!("{}: Invalid neutralLossFormula: {}", obj.id, err))
-                    }
-                }
-            }
-        }
-
-        if let Some(entry) = obj.property_values.get_mut("reactionSites") {
-            if entry.len() != 1 {
-                errors.push(format!(
-                    "{}: Too many reactionSites entries, can only have 1",
-                    obj.id
-                ));
-            }
-            if let OboValue::Integer(n, _) = entry[0].0 {
-                if n < 0 {
-                    errors.push(format!("{}: reactionSites is negative", obj.id));
-                } else {
-                    entry[0].0 = OboValue::Integer(n, "nonNegativeInteger");
-                    if n > 10 {
-                        errors.push(format!(
-                            "{}: Too high number of reactionSites, has to be below 10",
-                            obj.id
-                        ));
-                    }
-                }
-            }
-        }
-
-        if let Some(entry) = obj.property_values.get_mut("hydrophilicPEGchain") {
-            if entry.len() != 1 {
-                errors.push(format!(
-                    "{}: Too many hydrophilicPEGchain entries, can only have 1",
-                    obj.id
-                ));
-            }
-            if let OboValue::Integer(n, _) = entry[0].0 {
-                if n < 0 {
-                    errors.push(format!("{}: hydrophilicPEGchain is negative", obj.id));
-                } else {
-                    entry[0].0 = OboValue::Integer(n, "nonNegativeInteger");
-                }
-            }
-        }
-    }
-
-    Ok(())
 }

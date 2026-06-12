@@ -5,8 +5,18 @@ use mzcv::{
     OboIdentifier, OboOntology, OboStanza, OboStanzaType, OboSynonym, OboValue, RelationType,
 };
 
+#[derive(Default)]
+pub struct OboFormattingOptions {
+    /// Format xref lines as if they are property values
+    pub format_xref_as_property_value: bool,
+}
+
 // TODO: escape all written values (e.g. regular expression names)
-pub fn write<W: Write>(mut writer: W, obo: &OboOntology) -> Result<(), std::io::Error> {
+pub fn write<W: Write>(
+    mut writer: W,
+    obo: &OboOntology,
+    options: &OboFormattingOptions,
+) -> Result<(), std::io::Error> {
     if let Some((_, version, _, _)) = obo
         .headers
         .iter()
@@ -30,13 +40,17 @@ pub fn write<W: Write>(mut writer: W, obo: &OboOntology) -> Result<(), std::io::
 
     for object in &obo.objects {
         writeln!(writer)?;
-        write_object(&mut writer, object)?;
+        write_object(&mut writer, object, options)?;
     }
 
     Ok(())
 }
 
-pub fn write_object<W: Write>(mut writer: W, object: &OboStanza) -> Result<(), std::io::Error> {
+pub fn write_object<W: Write>(
+    mut writer: W,
+    object: &OboStanza,
+    options: &OboFormattingOptions,
+) -> Result<(), std::io::Error> {
     writeln!(
         writer,
         "[{}]",
@@ -47,13 +61,17 @@ pub fn write_object<W: Write>(mut writer: W, object: &OboStanza) -> Result<(), s
         }
     )?;
     match object.stanza_type {
-        OboStanzaType::Typedef => write_typedef(&mut writer, object),
-        OboStanzaType::Term => write_term(&mut writer, object),
-        OboStanzaType::Instance => write_instance(&mut writer, object),
+        OboStanzaType::Typedef => write_typedef(&mut writer, object, options),
+        OboStanzaType::Term => write_term(&mut writer, object, options),
+        OboStanzaType::Instance => write_instance(&mut writer, object, options),
     }
 }
 
-fn write_term<W: Write>(writer: &mut W, object: &OboStanza) -> Result<(), std::io::Error> {
+fn write_term<W: Write>(
+    writer: &mut W,
+    object: &OboStanza,
+    options: &OboFormattingOptions,
+) -> Result<(), std::io::Error> {
     writeln!(writer, "id: {}", object.id)?;
     write_lines(writer, &object.lines, "is_anonymous")?;
     write_lines(writer, &object.lines, "name")?;
@@ -63,7 +81,7 @@ fn write_term<W: Write>(writer: &mut W, object: &OboStanza) -> Result<(), std::i
     write_lines(writer, &object.lines, "comment")?;
     write_lines(writer, &object.lines, "subset")?;
     write_synonyms(writer, &object.synonyms)?;
-    write_xref(writer, &object.xref)?;
+    write_xref(writer, &object.xref, options)?;
     write_lines(writer, &object.lines, "builtin")?;
     write_property_value(writer, &object.property_values)?;
     write_is_a(writer, &object.relationship)?;
@@ -118,7 +136,11 @@ fn write_term<W: Write>(writer: &mut W, object: &OboStanza) -> Result<(), std::i
     Ok(())
 }
 
-fn write_typedef<W: Write>(writer: &mut W, object: &OboStanza) -> Result<(), std::io::Error> {
+fn write_typedef<W: Write>(
+    writer: &mut W,
+    object: &OboStanza,
+    options: &OboFormattingOptions,
+) -> Result<(), std::io::Error> {
     writeln!(writer, "id: {}", object.id)?;
     write_lines(writer, &object.lines, "is_anonymous")?;
     write_lines(writer, &object.lines, "name")?;
@@ -128,7 +150,7 @@ fn write_typedef<W: Write>(writer: &mut W, object: &OboStanza) -> Result<(), std
     write_lines(writer, &object.lines, "comment")?;
     write_lines(writer, &object.lines, "subset")?;
     write_synonyms(writer, &object.synonyms)?;
-    write_xref(writer, &object.xref)?;
+    write_xref(writer, &object.xref, options)?;
     write_property_value(writer, &object.property_values)?;
     write_lines(writer, &object.lines, "domain")?;
     write_lines(writer, &object.lines, "range")?;
@@ -219,7 +241,11 @@ fn write_typedef<W: Write>(writer: &mut W, object: &OboStanza) -> Result<(), std
     Ok(())
 }
 
-fn write_instance<W: Write>(writer: &mut W, object: &OboStanza) -> Result<(), std::io::Error> {
+fn write_instance<W: Write>(
+    writer: &mut W,
+    object: &OboStanza,
+    options: &OboFormattingOptions,
+) -> Result<(), std::io::Error> {
     writeln!(writer, "id: {}", object.id)?;
     write_lines(writer, &object.lines, "is_anonymous")?;
     write_lines(writer, &object.lines, "name")?;
@@ -229,7 +255,7 @@ fn write_instance<W: Write>(writer: &mut W, object: &OboStanza) -> Result<(), st
     write_lines(writer, &object.lines, "comment")?;
     write_lines(writer, &object.lines, "subset")?;
     write_synonyms(writer, &object.synonyms)?;
-    write_xref(writer, &object.xref)?;
+    write_xref(writer, &object.xref, options)?;
     write_lines(writer, &object.lines, "instance_of")?;
     write_property_value(writer, &object.property_values)?;
     write_is_a(writer, &object.relationship)?;
@@ -335,9 +361,18 @@ fn write_synonyms<W: Write>(writer: &mut W, synonyms: &[OboSynonym]) -> Result<(
 fn write_xref<W: Write>(
     writer: &mut W,
     xref: &[(OboIdentifier, Vec<(Box<str>, Box<str>)>, Option<Box<str>>)],
+    options: &OboFormattingOptions,
 ) -> Result<(), std::io::Error> {
     for (xref, modifiers, comment) in xref.iter().sorted_by_key(|x| &x.0) {
-        write!(writer, "xref: {xref}")?;
+        write!(writer, "xref: ")?;
+        if options.format_xref_as_property_value
+            && let Some(tag) = &xref.0
+        {
+            write!(writer, "{tag}: {}", xref.1)?;
+        } else {
+            write!(writer, "{xref}")?;
+        }
+
         write_end(writer, modifiers, comment.as_deref())?;
         writeln!(writer)?;
     }
