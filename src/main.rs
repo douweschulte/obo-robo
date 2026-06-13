@@ -8,9 +8,12 @@ use std::{
     collections::HashSet,
     fs::File,
     io::{BufRead, BufReader, BufWriter, Write},
+    path::{Path, PathBuf},
     process::ExitCode,
 };
 
+use chrono::{Datelike, Timelike};
+use clap::{Parser, ValueEnum};
 use itertools::Itertools;
 use mzcore::sequence::CrossId;
 use mzcv::{OboIdentifier, OboOntology, OboStanzaType, RelationType, SynonymScope};
@@ -20,47 +23,51 @@ use crate::{
     update_psi_mod::psi_mod_proper_style,
 };
 
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// The action to take
+    action: Action,
+    /// The Obo file to open
+    path: PathBuf,
+    /// The location where to save any generated Obo files
+    new_path: Option<PathBuf>,
+    /// The name of the author if the version should be bumped (only works with fix)
+    #[arg(long)]
+    bump: Option<Box<str>>,
+    /// Lint only the changed line numbers
+    #[arg(long, value_parser=line_numbers)]
+    #[allow(unused_qualifications)] // Needed to trick clap
+    changed_line_numbers: Option<std::vec::Vec<usize>>,
+}
+
+fn line_numbers(value: &str) -> Result<Vec<usize>, &'static str> {
+    Ok(value
+        .split(',')
+        .filter_map(|v| v.parse().ok())
+        .unique()
+        .sorted_unstable()
+        .collect())
+}
+
+#[derive(ValueEnum, Clone, Debug)]
 enum Action {
+    /// Shows general Obo errors about the file
     Lint,
+    /// Formats the Obo file with generic rules
     Fmt,
+    /// Fix with ontology specific rules and formats the Obo file
     Fix,
-    NewFormat,
+    /// Fix PSI-MOD to follow the Obo format better to create a proper owl file
+    Newfmt,
+    /// Load an Obo file to search in it interactively
     Search,
 }
 
 fn main() -> ExitCode {
-    let Some(action) = std::env::args().nth(1) else {
-        eprintln!(
-            "An action should be given as first argument, any of 'lint', 'fmt', 'fix', 'newfmt', or 'search'"
-        );
-        return 1.into();
-    };
-    let Some(path) = std::env::args().nth(2) else {
-        eprintln!("A path should be given as second argument");
-        return 2.into();
-    };
+    let args = Args::parse();
 
-    let action = match action.as_str() {
-        "lint" => Action::Lint,
-        "fmt" => Action::Fmt,
-        "newfmt" => Action::NewFormat,
-        "fix" => Action::Fix,
-        "search" => Action::Search,
-        _ => {
-            println!("Usage: <action> <path>");
-            println!("Use any of 'lint', 'fmt', 'fix', or 'search' as action");
-            println!(" 'lint' - Shows general Obo errors about the file");
-            println!(" 'fmt' - Formats the Obo file with generic rules");
-            println!(" 'fix' - Fix with ontology specific rules and formats the Obo file");
-            println!(
-                " 'newfmt' - Fix PSI-MOD to follow the Obo format better to create a proper owl file"
-            );
-            println!(" 'search' - Load an Obo file to search in it interactively");
-            return 0.into();
-        }
-    };
-
-    let mut file = match OboOntology::from_file(&path) {
+    let mut file = match OboOntology::from_file(&args.path) {
         Ok(value) => value,
         Err(err) => {
             eprintln!("{}", err);
@@ -68,22 +75,18 @@ fn main() -> ExitCode {
         }
     };
 
-    match action {
+    match &args.action {
         Action::Lint => {
-            if let Some(lines) = std::env::args().nth(3) {
-                let lines = lines
-                    .split(',')
-                    .filter_map(|n| n.parse::<usize>().ok())
-                    .sorted()
-                    .collect::<Vec<_>>();
-                let items = detect_items(&lines, &path);
+            if let Some(mut lines) = args.changed_line_numbers {
+                lines.sort();
+                let items = detect_items(&lines, &args.path);
                 println!("Changed items: {}", items.iter().sorted().join(", "));
                 let _ = validate(&file, Some(&items));
             } else {
                 let _ = validate(&file, None);
             }
         }
-        Action::Fmt => fmt(&file, &path),
+        Action::Fmt => fmt(&file, args.new_path.as_ref().unwrap_or(&args.path)),
         Action::Fix => {
             let mut error = false;
             if let Err(errs) = fix(&mut file) {
@@ -92,14 +95,53 @@ fn main() -> ExitCode {
                     error = true;
                 }
             }
-            fmt(&file, &path);
+            if let Some(author) = args.bump {
+                if let Some([a, b, c]) = file
+                    .data_version
+                    .as_ref()
+                    .and_then(|v| {
+                        v.split('.')
+                            .take(3)
+                            .map(|n| n.parse::<usize>())
+                            .collect::<Result<Vec<_>, _>>()
+                            .ok()
+                    })
+                    .as_deref()
+                {
+                    file.data_version = Some(format!("{a}.{b}.{}", c + 1).into());
+                    let now = chrono::Utc::now();
+                    file.date = Some((
+                        now.year_ce().1 as u16,
+                        now.month() as u8,
+                        now.day() as u8,
+                        now.hour() as u8,
+                        now.minute() as u8,
+                    ));
+                    if let Some(line) = file
+                        .headers
+                        .iter_mut()
+                        .find(|h| h.0.eq_ignore_ascii_case("saved-by"))
+                    {
+                        line.1 = author;
+                    } else {
+                        file.headers
+                            .push(("saved-by".into(), author, Vec::new(), None))
+                    }
+                } else {
+                    eprintln!(
+                        "::error::Invalid Obo version, expects the data_version to be set to a '<major>.<minor>.<patch>' version number"
+                    );
+                }
+            }
+
+            fmt(&file, args.new_path.as_ref().unwrap_or(&args.path));
             if error {
                 return 5.into();
             }
         }
-        Action::NewFormat => {
+        Action::Newfmt => {
             psi_mod_proper_style(&mut file);
-            fmt(&file, "PSI-MOD-newstyle.obo");
+            fmt(&file, args.new_path.as_ref().unwrap_or(&args.path));
         }
         Action::Search => {
             println!(
@@ -136,7 +178,7 @@ fn main() -> ExitCode {
     0.into()
 }
 
-fn fmt(ontology: &OboOntology, path: &str) {
+fn fmt(ontology: &OboOntology, path: impl AsRef<Path>) {
     obo_writer::write(
         BufWriter::new(File::create(path).unwrap()),
         &ontology,
@@ -336,7 +378,7 @@ fn fix(ontology: &mut OboOntology) -> Result<(), Vec<String>> {
 }
 
 /// Lines needs to be sorted
-fn detect_items(numbers: &[usize], path: &str) -> HashSet<OboIdentifier> {
+fn detect_items(numbers: &[usize], path: impl AsRef<Path>) -> HashSet<OboIdentifier> {
     let mut detected = HashSet::new();
     let mut current_item = None;
     let mut lines = BufReader::new(File::open(path).unwrap())
