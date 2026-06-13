@@ -2,30 +2,36 @@
 mod fix_psi_mod;
 mod fix_xlmod;
 mod obo_writer;
+mod update_psi_mod;
 
 use std::{
     collections::HashSet,
     fs::File,
-    io::{BufWriter, Write},
+    io::{BufRead, BufReader, BufWriter, Write},
     process::ExitCode,
 };
 
+use itertools::Itertools;
 use mzcore::sequence::CrossId;
-use mzcv::{OboOntology, OboStanzaType, RelationType, SynonymScope};
+use mzcv::{OboIdentifier, OboOntology, OboStanzaType, RelationType, SynonymScope};
 
-use crate::obo_writer::{OboFormattingOptions, write_object};
+use crate::{
+    obo_writer::{OboFormattingOptions, write_object},
+    update_psi_mod::psi_mod_proper_style,
+};
 
 enum Action {
     Lint,
     Fmt,
     Fix,
+    NewFormat,
     Search,
 }
 
 fn main() -> ExitCode {
     let Some(action) = std::env::args().nth(1) else {
         eprintln!(
-            "An action should be given as first argument, any of 'lint', 'fmt', 'fix', or 'search'"
+            "An action should be given as first argument, any of 'lint', 'fmt', 'fix', 'newfmt', or 'search'"
         );
         return 1.into();
     };
@@ -37,6 +43,7 @@ fn main() -> ExitCode {
     let action = match action.as_str() {
         "lint" => Action::Lint,
         "fmt" => Action::Fmt,
+        "newfmt" => Action::NewFormat,
         "fix" => Action::Fix,
         "search" => Action::Search,
         _ => {
@@ -44,7 +51,10 @@ fn main() -> ExitCode {
             println!("Use any of 'lint', 'fmt', 'fix', or 'search' as action");
             println!(" 'lint' - Shows general Obo errors about the file");
             println!(" 'fmt' - Formats the Obo file with generic rules");
-            println!(" 'fix' - Fix ontology specific rules and formats the Obo file");
+            println!(" 'fix' - Fix with ontology specific rules and formats the Obo file");
+            println!(
+                " 'newfmt' - Fix PSI-MOD to follow the Obo format better to create a proper owl file"
+            );
             println!(" 'search' - Load an Obo file to search in it interactively");
             return 0.into();
         }
@@ -60,7 +70,18 @@ fn main() -> ExitCode {
 
     match action {
         Action::Lint => {
-            let _ = validate(&file);
+            if let Some(lines) = std::env::args().nth(3) {
+                let lines = lines
+                    .split(',')
+                    .filter_map(|n| n.parse::<usize>().ok())
+                    .sorted()
+                    .collect::<Vec<_>>();
+                let items = detect_items(&lines, &path);
+                println!("Changed items: {}", items.iter().sorted().join(", "));
+                let _ = validate(&file, Some(&items));
+            } else {
+                let _ = validate(&file, None);
+            }
         }
         Action::Fmt => fmt(&file, &path),
         Action::Fix => {
@@ -75,6 +96,10 @@ fn main() -> ExitCode {
             if error {
                 return 5.into();
             }
+        }
+        Action::NewFormat => {
+            psi_mod_proper_style(&mut file);
+            fmt(&file, "PSI-MOD-newstyle.obo");
         }
         Action::Search => {
             println!(
@@ -125,13 +150,17 @@ fn fmt(ontology: &OboOntology, path: &str) {
     .unwrap()
 }
 
-fn validate(ontology: &OboOntology) -> bool {
+fn validate(ontology: &OboOntology, subset: Option<&HashSet<OboIdentifier>>) -> bool {
     let mut warnings = Vec::new();
     let mut names = HashSet::new();
     let mut definitions = HashSet::new();
     let mut ids = HashSet::new();
 
     for obj in &ontology.objects {
+        if subset.is_some_and(|s| !s.contains(&obj.id)) {
+            continue;
+        }
+
         // Check for duplicate IDs
         if !ids.insert(obj.id.clone()) {
             warnings.push((obj.id.clone(), "Duplicate ID".to_string()));
@@ -304,4 +333,37 @@ fn fix(ontology: &mut OboOntology) -> Result<(), Vec<String>> {
     } else {
         Ok(())
     }
+}
+
+/// Lines needs to be sorted
+fn detect_items(numbers: &[usize], path: &str) -> HashSet<OboIdentifier> {
+    let mut detected = HashSet::new();
+    let mut current_item = None;
+    let mut lines = BufReader::new(File::open(path).unwrap())
+        .lines()
+        .enumerate();
+
+    for search_index in numbers {
+        let search_index = search_index.saturating_sub(1);
+        while let Some((index, line)) = lines.next() {
+            let line = line.unwrap();
+            if search_index < index {
+                break; // Should not happen unless a single line was in there twice
+            }
+            if let Some(end) = line.strip_prefix("id:") {
+                current_item = Some(end.trim().split_once(':').map_or_else(
+                    || OboIdentifier(None, end.trim().into()),
+                    |(t, v)| OboIdentifier(Some(t.trim().into()), v.trim().into()),
+                ));
+            }
+            if index == search_index {
+                if let Some(c) = &current_item {
+                    detected.insert(c.clone());
+                }
+                break;
+            }
+        }
+    }
+
+    detected
 }

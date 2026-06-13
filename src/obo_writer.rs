@@ -456,7 +456,8 @@ fn write_cross_ids<W: Write>(
     let mut first = true;
     for (tag, value) in cross_ids
         .iter()
-        .sorted_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
+        .unique()
+        .sorted_unstable_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
     {
         if first {
             first = false;
