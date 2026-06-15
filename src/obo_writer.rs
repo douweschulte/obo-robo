@@ -439,7 +439,7 @@ fn write_relationship<W: Write>(
                 None
             }
         })
-        .sorted_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
+        .sorted_by(|a, b| a.0.cmp(b.0).then(a.1.cmp(b.1)))
     {
         write!(writer, "relationship: {kind} {xref}")?;
         write_end(writer, modifiers, comment.as_deref())?;

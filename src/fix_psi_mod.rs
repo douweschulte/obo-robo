@@ -10,7 +10,9 @@ pub fn fix_psi_mod(ontology: &mut OboOntology) -> Result<(), Vec<String>> {
             .find(|x| x.0.0.as_ref().is_some_and(|t| t.as_ref() == "DiffFormula"))
         {
             let trimmed = entry.0.1.trim().trim_matches('\"');
-            if !trimmed.eq_ignore_ascii_case("none") {
+            if trimmed.eq_ignore_ascii_case("none") {
+                None
+            } else {
                 match MolecularFormula::psi_mod(trimmed) {
                     Ok(formula) => {
                         entry.0.1 = format!(
@@ -62,8 +64,6 @@ pub fn fix_psi_mod(ontology: &mut OboOntology) -> Result<(), Vec<String>> {
                         None
                     }
                 }
-            } else {
-                None
             }
         } else {
             None
@@ -75,7 +75,9 @@ pub fn fix_psi_mod(ontology: &mut OboOntology) -> Result<(), Vec<String>> {
             .find(|x| x.0.0.as_ref().is_some_and(|t| t.as_ref() == "Formula"))
         {
             let trimmed = entry.0.1.trim().trim_matches('\"');
-            if !trimmed.eq_ignore_ascii_case("none") {
+            if trimmed.eq_ignore_ascii_case("none") {
+                None
+            } else {
                 match MolecularFormula::psi_mod(trimmed) {
                     Ok(formula) => {
                         entry.0.1 = format!(
@@ -127,8 +129,6 @@ pub fn fix_psi_mod(ontology: &mut OboOntology) -> Result<(), Vec<String>> {
                         None
                     }
                 }
-            } else {
-                None
             }
         } else {
             None

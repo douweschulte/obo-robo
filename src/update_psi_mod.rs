@@ -5,7 +5,7 @@ pub fn psi_mod_proper_style(ontology: &mut OboOntology) {
         obj.xref.retain(|(xref, m, c)| {
             let value = xref.1.trim_matches('\"');
             match xref.0.as_deref() {
-                Some(t @ "DiffAvg" | t @ "MassAvg") if let Ok(v) = value.parse::<f64>() => {
+                Some(t @ ("DiffAvg" | "MassAvg")) if let Ok(v) = value.parse::<f64>() => {
                     obj.property_values.entry(t.into()).or_default().push((
                         OboValue::Float(v, "float", Some(2)),
                         m.clone(),

@@ -70,7 +70,7 @@ fn main() -> ExitCode {
     let mut file = match OboOntology::from_file(&args.path) {
         Ok(value) => value,
         Err(err) => {
-            eprintln!("{}", err);
+            eprintln!("{err}");
             return 3.into();
         }
     };
@@ -78,7 +78,7 @@ fn main() -> ExitCode {
     match &args.action {
         Action::Lint => {
             if let Some(mut lines) = args.changed_line_numbers {
-                lines.sort();
+                lines.sort_unstable();
                 let items = detect_items(&lines, &args.path);
                 println!("Changed items: {}", items.iter().sorted().join(", "));
                 let _ = validate(&file, Some(&items));
@@ -102,7 +102,7 @@ fn main() -> ExitCode {
                     .and_then(|v| {
                         v.split('.')
                             .take(3)
-                            .map(|n| n.parse::<usize>())
+                            .map(str::parse::<usize>)
                             .collect::<Result<Vec<_>, _>>()
                             .ok()
                     })
@@ -125,7 +125,7 @@ fn main() -> ExitCode {
                         line.1 = author;
                     } else {
                         file.headers
-                            .push(("saved-by".into(), author, Vec::new(), None))
+                            .push(("saved-by".into(), author, Vec::new(), None));
                     }
                 } else {
                     eprintln!(
@@ -181,7 +181,7 @@ fn main() -> ExitCode {
 fn fmt(ontology: &OboOntology, path: impl AsRef<Path>) {
     obo_writer::write(
         BufWriter::new(File::create(path).unwrap()),
-        &ontology,
+        ontology,
         &OboFormattingOptions {
             format_xref_as_property_value: ontology
                 .headers
@@ -189,7 +189,7 @@ fn fmt(ontology: &OboOntology, path: impl AsRef<Path>) {
                 .any(|h| h.0.as_ref() == "ontology" && h.1.as_ref() == "mod"),
         },
     )
-    .unwrap()
+    .unwrap();
 }
 
 fn validate(ontology: &OboOntology, subset: Option<&HashSet<OboIdentifier>>) -> bool {
@@ -356,7 +356,7 @@ fn validate(ontology: &OboOntology, subset: Option<&HashSet<OboIdentifier>>) -> 
     }
 
     if !warnings.is_empty() {
-        println!("::warning::Some potential problems where detected")
+        println!("::warning::Some potential problems where detected");
     }
     for (id, warning) in &warnings {
         println!("::notice::{id}: {warning}");
@@ -387,7 +387,7 @@ fn detect_items(numbers: &[usize], path: impl AsRef<Path>) -> HashSet<OboIdentif
 
     for search_index in numbers {
         let search_index = search_index.saturating_sub(1);
-        while let Some((index, line)) = lines.next() {
+        for (index, line) in lines.by_ref() {
             let line = line.unwrap();
             if search_index < index {
                 break; // Should not happen unless a single line was in there twice

@@ -49,7 +49,7 @@ pub fn fix_xlmod(ontology: &mut OboOntology) -> Result<(), Vec<String>> {
                         );
                     }
                     Err(err) => {
-                        errors.push(format!("{}: Invalid neutralLossFormula: {}", obj.id, err))
+                        errors.push(format!("{}: Invalid neutralLossFormula: {}", obj.id, err));
                     }
                 }
             }
