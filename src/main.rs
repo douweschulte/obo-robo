@@ -297,6 +297,13 @@ fn validate(ontology: &OboOntology, subset: Option<&HashSet<OboIdentifier>>) -> 
             }
         }
 
+        if obj.obsolete && !obj.relationship.is_empty() {
+            warnings.push((
+                obj.id.clone(),
+                "This obsoleted term has relationships".to_string(),
+            ));
+        }
+
         // Check for suspicious comments
         let mut parent_stack = Vec::new();
         for (t, rel, _, comment) in &obj.relationship {
@@ -314,6 +321,15 @@ fn validate(ontology: &OboOntology, subset: Option<&HashSet<OboIdentifier>>) -> 
                         ));
                     }
                     parent_stack.push(relation);
+                }
+                if relation.obsolete {
+                    warnings.push((
+                        obj.id.clone(),
+                        format!(
+                            "This related term is marked obsolete: '{}|{}'",
+                            relation.id, relation.lines["name"][0].0
+                        ),
+                    ));
                 }
             } else {
                 warnings.push((
