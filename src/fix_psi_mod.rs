@@ -1,10 +1,10 @@
 use std::{collections::HashMap, str::FromStr};
 
 use mzcore::{
-    chemistry::{Element, MolecularFormula, MultiChemical},
+    chemistry::{MolecularFormula, MultiChemical},
     sequence::AminoAcid,
 };
-use mzcv::{OboIdentifier, OboOntology, OboStanza, RelationType};
+use mzcv::{OboIdentifier, OboOntology};
 
 pub fn fix_psi_mod(ontology: &mut OboOntology) -> Result<(), Vec<String>> {
     let mut errors = Vec::new();
