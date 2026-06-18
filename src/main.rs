@@ -90,6 +90,7 @@ fn main() -> ExitCode {
         Action::Fix => {
             let mut error = false;
             if let Err(errs) = fix(&mut file) {
+                eprintln!("{} errors:", errs.len());
                 for err in errs {
                     eprintln!("::error::{err}");
                     error = true;
