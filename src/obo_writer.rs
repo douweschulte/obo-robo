@@ -497,7 +497,6 @@ fn write_end<W: Write>(
     Ok(())
 }
 
-// TODO: figure out which characters to escape, as this depends on context, check stuff like: UO:0000268
 fn escape<W: Write>(
     writer: &mut W,
     text: &str,
