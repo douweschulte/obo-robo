@@ -39,6 +39,9 @@ struct Args {
     #[arg(long, value_parser=line_numbers)]
     #[allow(unused_qualifications)] // Needed to trick clap
     changed_line_numbers: Option<std::vec::Vec<usize>>,
+    /// Keep ordering as much as possible (lines are still reordered based on their line types but otherwise stay stable)
+    #[arg(long)]
+    keep_ordering: bool,
 }
 
 fn line_numbers(value: &str) -> Result<Vec<usize>, &'static str> {
@@ -86,7 +89,11 @@ fn main() -> ExitCode {
                 let _ = validate(&file, None);
             }
         }
-        Action::Fmt => fmt(&file, args.new_path.as_ref().unwrap_or(&args.path)),
+        Action::Fmt => fmt(
+            &file,
+            args.new_path.as_ref().unwrap_or(&args.path),
+            !args.keep_ordering,
+        ),
         Action::Fix => {
             let mut error = false;
             if let Err(errs) = fix(&mut file) {
@@ -135,14 +142,22 @@ fn main() -> ExitCode {
                 }
             }
 
-            fmt(&file, args.new_path.as_ref().unwrap_or(&args.path));
+            fmt(
+                &file,
+                args.new_path.as_ref().unwrap_or(&args.path),
+                !args.keep_ordering,
+            );
             if error {
                 return 5.into();
             }
         }
         Action::Newfmt => {
             psi_mod_proper_style(&mut file);
-            fmt(&file, args.new_path.as_ref().unwrap_or(&args.path));
+            fmt(
+                &file,
+                args.new_path.as_ref().unwrap_or(&args.path),
+                !args.keep_ordering,
+            );
         }
         Action::Search => {
             println!(
@@ -179,7 +194,7 @@ fn main() -> ExitCode {
     0.into()
 }
 
-fn fmt(ontology: &OboOntology, path: impl AsRef<Path>) {
+fn fmt(ontology: &OboOntology, path: impl AsRef<Path>, sort: bool) {
     obo_writer::write(
         BufWriter::new(File::create(path).unwrap()),
         ontology,
@@ -188,6 +203,7 @@ fn fmt(ontology: &OboOntology, path: impl AsRef<Path>) {
                 .headers
                 .iter()
                 .any(|h| h.0.as_ref() == "ontology" && h.1.as_ref() == "mod"),
+            sort,
         },
     )
     .unwrap();

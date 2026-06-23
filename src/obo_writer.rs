@@ -1,5 +1,5 @@
 use itertools::Itertools;
-use std::{collections::HashMap, io::Write};
+use std::{cmp::Ordering, collections::HashMap, io::Write};
 
 use mzcv::{
     OboIdentifier, OboOntology, OboStanza, OboStanzaType, OboSynonym, OboValue, RelationType,
@@ -9,6 +9,8 @@ use mzcv::{
 pub struct OboFormattingOptions {
     /// Format xref lines as if they are property values
     pub format_xref_as_property_value: bool,
+    /// Sort the lines and values where possible
+    pub sort: bool,
 }
 
 // TODO: escape all written values (e.g. regular expression names)
@@ -73,30 +75,30 @@ fn write_term<W: Write>(
     options: &OboFormattingOptions,
 ) -> Result<(), std::io::Error> {
     writeln!(writer, "id: {}", object.id)?;
-    write_lines(writer, &object.lines, "is_anonymous")?;
-    write_lines(writer, &object.lines, "name")?;
-    write_lines(writer, &object.lines, "namespace")?;
-    write_lines(writer, &object.lines, "alt_id")?;
-    write_def(writer, &object.definition)?;
-    write_lines(writer, &object.lines, "comment")?;
-    write_lines(writer, &object.lines, "subset")?;
-    write_synonyms(writer, &object.synonyms)?;
+    write_lines(writer, &object.lines, "is_anonymous", options.sort)?;
+    write_lines(writer, &object.lines, "name", options.sort)?;
+    write_lines(writer, &object.lines, "namespace", options.sort)?;
+    write_lines(writer, &object.lines, "alt_id", options.sort)?;
+    write_def(writer, &object.definition, options.sort)?;
+    write_lines(writer, &object.lines, "comment", options.sort)?;
+    write_lines(writer, &object.lines, "subset", options.sort)?;
+    write_synonyms(writer, &object.synonyms, options.sort)?;
     write_xref(writer, &object.xref, options)?;
-    write_lines(writer, &object.lines, "builtin")?;
-    write_property_value(writer, &object.property_values)?;
-    write_is_a(writer, &object.relationship)?;
-    write_lines(writer, &object.lines, "intersection_of")?;
-    write_lines(writer, &object.lines, "union_of")?;
-    write_lines(writer, &object.lines, "equivalent_to")?;
-    write_lines(writer, &object.lines, "disjoint_from")?;
-    write_relationship(writer, &object.relationship)?;
-    write_lines(writer, &object.lines, "created_by")?;
-    write_lines(writer, &object.lines, "creation_date")?;
+    write_lines(writer, &object.lines, "builtin", options.sort)?;
+    write_property_value(writer, &object.property_values, options.sort)?;
+    write_is_a(writer, &object.relationship, options.sort)?;
+    write_lines(writer, &object.lines, "intersection_of", options.sort)?;
+    write_lines(writer, &object.lines, "union_of", options.sort)?;
+    write_lines(writer, &object.lines, "equivalent_to", options.sort)?;
+    write_lines(writer, &object.lines, "disjoint_from", options.sort)?;
+    write_relationship(writer, &object.relationship, options.sort)?;
+    write_lines(writer, &object.lines, "created_by", options.sort)?;
+    write_lines(writer, &object.lines, "creation_date", options.sort)?;
     if object.obsolete {
         writeln!(writer, "is_obsolete: true")?;
     }
-    write_lines(writer, &object.lines, "replaced_by")?;
-    write_lines(writer, &object.lines, "consider")?;
+    write_lines(writer, &object.lines, "replaced_by", options.sort)?;
+    write_lines(writer, &object.lines, "consider", options.sort)?;
     for (kind, lines) in object.lines.iter().sorted_by_key(|(k, _)| *k) {
         if [
             "id",
@@ -127,8 +129,12 @@ fn write_term<W: Write>(
         {
             continue;
         }
-        for (value, modifiers, comment) in lines.iter().sorted_by_key(|l| &l.0) {
-            write!(writer, "{kind}: {value}")?;
+        for (value, modifiers, comment) in
+            maybe_sort(lines.iter(), |a, b| a.0.cmp(&b.0), options.sort)
+        {
+            escape(writer, kind, Some(':'))?;
+            write!(writer, ": ")?;
+            escape(writer, value, None)?;
             write_end(writer, modifiers, comment.as_deref())?;
             writeln!(writer)?;
         }
@@ -142,48 +148,48 @@ fn write_typedef<W: Write>(
     options: &OboFormattingOptions,
 ) -> Result<(), std::io::Error> {
     writeln!(writer, "id: {}", object.id)?;
-    write_lines(writer, &object.lines, "is_anonymous")?;
-    write_lines(writer, &object.lines, "name")?;
-    write_lines(writer, &object.lines, "namespace")?;
-    write_lines(writer, &object.lines, "alt_id")?;
-    write_def(writer, &object.definition)?;
-    write_lines(writer, &object.lines, "comment")?;
-    write_lines(writer, &object.lines, "subset")?;
-    write_synonyms(writer, &object.synonyms)?;
+    write_lines(writer, &object.lines, "is_anonymous", options.sort)?;
+    write_lines(writer, &object.lines, "name", options.sort)?;
+    write_lines(writer, &object.lines, "namespace", options.sort)?;
+    write_lines(writer, &object.lines, "alt_id", options.sort)?;
+    write_def(writer, &object.definition, options.sort)?;
+    write_lines(writer, &object.lines, "comment", options.sort)?;
+    write_lines(writer, &object.lines, "subset", options.sort)?;
+    write_synonyms(writer, &object.synonyms, options.sort)?;
     write_xref(writer, &object.xref, options)?;
-    write_property_value(writer, &object.property_values)?;
-    write_lines(writer, &object.lines, "domain")?;
-    write_lines(writer, &object.lines, "range")?;
-    write_lines(writer, &object.lines, "builtin")?;
-    write_lines(writer, &object.lines, "holds_over_chain")?;
-    write_lines(writer, &object.lines, "is_anti_symmetric")?;
-    write_lines(writer, &object.lines, "is_cyclic")?;
-    write_lines(writer, &object.lines, "is_reflexive")?;
-    write_lines(writer, &object.lines, "is_symmetric")?;
-    write_lines(writer, &object.lines, "is_transitive")?;
-    write_lines(writer, &object.lines, "is_functional")?;
-    write_lines(writer, &object.lines, "is_inverse_functional")?;
-    write_is_a(writer, &object.relationship)?;
-    write_lines(writer, &object.lines, "intersection_of")?;
-    write_lines(writer, &object.lines, "union_of")?;
-    write_lines(writer, &object.lines, "equivalent_to")?;
-    write_lines(writer, &object.lines, "disjoint_from")?;
-    write_lines(writer, &object.lines, "inverse_of")?;
-    write_lines(writer, &object.lines, "transitive_over")?;
-    write_lines(writer, &object.lines, "equivalent_to_chain")?;
-    write_lines(writer, &object.lines, "disjoint_over")?;
-    write_relationship(writer, &object.relationship)?;
+    write_property_value(writer, &object.property_values, options.sort)?;
+    write_lines(writer, &object.lines, "domain", options.sort)?;
+    write_lines(writer, &object.lines, "range", options.sort)?;
+    write_lines(writer, &object.lines, "builtin", options.sort)?;
+    write_lines(writer, &object.lines, "holds_over_chain", options.sort)?;
+    write_lines(writer, &object.lines, "is_anti_symmetric", options.sort)?;
+    write_lines(writer, &object.lines, "is_cyclic", options.sort)?;
+    write_lines(writer, &object.lines, "is_reflexive", options.sort)?;
+    write_lines(writer, &object.lines, "is_symmetric", options.sort)?;
+    write_lines(writer, &object.lines, "is_transitive", options.sort)?;
+    write_lines(writer, &object.lines, "is_functional", options.sort)?;
+    write_lines(writer, &object.lines, "is_inverse_functional", options.sort)?;
+    write_is_a(writer, &object.relationship, options.sort)?;
+    write_lines(writer, &object.lines, "intersection_of", options.sort)?;
+    write_lines(writer, &object.lines, "union_of", options.sort)?;
+    write_lines(writer, &object.lines, "equivalent_to", options.sort)?;
+    write_lines(writer, &object.lines, "disjoint_from", options.sort)?;
+    write_lines(writer, &object.lines, "inverse_of", options.sort)?;
+    write_lines(writer, &object.lines, "transitive_over", options.sort)?;
+    write_lines(writer, &object.lines, "equivalent_to_chain", options.sort)?;
+    write_lines(writer, &object.lines, "disjoint_over", options.sort)?;
+    write_relationship(writer, &object.relationship, options.sort)?;
     if object.obsolete {
         writeln!(writer, "is_obsolete: true")?;
     }
-    write_lines(writer, &object.lines, "created_by")?;
-    write_lines(writer, &object.lines, "creation_date")?;
-    write_lines(writer, &object.lines, "replaced_by")?;
-    write_lines(writer, &object.lines, "consider")?;
-    write_lines(writer, &object.lines, "expand_assertion_to")?;
-    write_lines(writer, &object.lines, "expand_expression_to")?;
-    write_lines(writer, &object.lines, "is_metadata_tag")?;
-    write_lines(writer, &object.lines, "is_class_level")?;
+    write_lines(writer, &object.lines, "created_by", options.sort)?;
+    write_lines(writer, &object.lines, "creation_date", options.sort)?;
+    write_lines(writer, &object.lines, "replaced_by", options.sort)?;
+    write_lines(writer, &object.lines, "consider", options.sort)?;
+    write_lines(writer, &object.lines, "expand_assertion_to", options.sort)?;
+    write_lines(writer, &object.lines, "expand_expression_to", options.sort)?;
+    write_lines(writer, &object.lines, "is_metadata_tag", options.sort)?;
+    write_lines(writer, &object.lines, "is_class_level", options.sort)?;
     for (kind, lines) in object.lines.iter().sorted_by_key(|(k, _)| *k) {
         if [
             "id",
@@ -232,8 +238,12 @@ fn write_typedef<W: Write>(
         {
             continue;
         }
-        for (value, modifiers, comment) in lines.iter().sorted_by_key(|l| &l.0) {
-            write!(writer, "{kind}: {value}")?;
+        for (value, modifiers, comment) in
+            maybe_sort(lines.iter(), |a, b| a.0.cmp(&b.0), options.sort)
+        {
+            escape(writer, kind, Some(':'))?;
+            write!(writer, ": ")?;
+            escape(writer, value, None)?;
             write_end(writer, modifiers, comment.as_deref())?;
             writeln!(writer)?;
         }
@@ -247,26 +257,26 @@ fn write_instance<W: Write>(
     options: &OboFormattingOptions,
 ) -> Result<(), std::io::Error> {
     writeln!(writer, "id: {}", object.id)?;
-    write_lines(writer, &object.lines, "is_anonymous")?;
-    write_lines(writer, &object.lines, "name")?;
-    write_lines(writer, &object.lines, "namespace")?;
-    write_lines(writer, &object.lines, "alt_id")?;
-    write_def(writer, &object.definition)?;
-    write_lines(writer, &object.lines, "comment")?;
-    write_lines(writer, &object.lines, "subset")?;
-    write_synonyms(writer, &object.synonyms)?;
+    write_lines(writer, &object.lines, "is_anonymous", options.sort)?;
+    write_lines(writer, &object.lines, "name", options.sort)?;
+    write_lines(writer, &object.lines, "namespace", options.sort)?;
+    write_lines(writer, &object.lines, "alt_id", options.sort)?;
+    write_def(writer, &object.definition, options.sort)?;
+    write_lines(writer, &object.lines, "comment", options.sort)?;
+    write_lines(writer, &object.lines, "subset", options.sort)?;
+    write_synonyms(writer, &object.synonyms, options.sort)?;
     write_xref(writer, &object.xref, options)?;
-    write_lines(writer, &object.lines, "instance_of")?;
-    write_property_value(writer, &object.property_values)?;
-    write_is_a(writer, &object.relationship)?;
-    write_relationship(writer, &object.relationship)?;
-    write_lines(writer, &object.lines, "created_by")?;
-    write_lines(writer, &object.lines, "creation_date")?;
+    write_lines(writer, &object.lines, "instance_of", options.sort)?;
+    write_property_value(writer, &object.property_values, options.sort)?;
+    write_is_a(writer, &object.relationship, options.sort)?;
+    write_relationship(writer, &object.relationship, options.sort)?;
+    write_lines(writer, &object.lines, "created_by", options.sort)?;
+    write_lines(writer, &object.lines, "creation_date", options.sort)?;
     if object.obsolete {
         writeln!(writer, "is_obsolete: true")?;
     }
-    write_lines(writer, &object.lines, "replaced_by")?;
-    write_lines(writer, &object.lines, "consider")?;
+    write_lines(writer, &object.lines, "replaced_by", options.sort)?;
+    write_lines(writer, &object.lines, "consider", options.sort)?;
     for (kind, lines) in object.lines.iter().sorted_by_key(|(k, _)| *k) {
         if [
             "id",
@@ -292,8 +302,12 @@ fn write_instance<W: Write>(
         {
             continue;
         }
-        for (value, modifiers, comment) in lines.iter().sorted_by_key(|l| &l.0) {
-            write!(writer, "{kind}: {value}")?;
+        for (value, modifiers, comment) in
+            maybe_sort(lines.iter(), |a, b| a.0.cmp(&b.0), options.sort)
+        {
+            escape(writer, kind, Some(':'))?;
+            write!(writer, ": ")?;
+            escape(writer, value, None)?;
             write_end(writer, modifiers, comment.as_deref())?;
             writeln!(writer)?;
         }
@@ -305,10 +319,13 @@ fn write_lines<W: Write>(
     writer: &mut W,
     lines: &HashMap<Box<str>, Vec<(Box<str>, Vec<(Box<str>, Box<str>)>, Option<Box<str>>)>>,
     key: &str,
+    sort: bool,
 ) -> Result<(), std::io::Error> {
     if let Some(values) = lines.get(key) {
-        for (value, modifiers, comment) in values.iter().sorted_by_key(|l| &l.0) {
-            write!(writer, "{key}: {value}")?;
+        for (value, modifiers, comment) in maybe_sort(values.iter(), |a, b| a.0.cmp(&b.0), sort) {
+            escape(writer, key, Some(':'))?;
+            write!(writer, ": ")?;
+            escape(writer, value, None)?;
             write_end(writer, modifiers, comment.as_deref())?;
             writeln!(writer)?;
         }
@@ -324,30 +341,37 @@ fn write_def<W: Write>(
         Vec<(Box<str>, Box<str>)>,
         Option<Box<str>>,
     )>,
+    sort: bool,
 ) -> Result<(), std::io::Error> {
     if let Some((def, cross_ids, modifiers, comment)) = def {
         write!(writer, "def: \"")?;
         escape(writer, def, Some('\"'))?;
         write!(writer, "\" ")?;
-        write_cross_ids(writer, cross_ids)?;
+        write_cross_ids(writer, cross_ids, sort)?;
         write_end(writer, modifiers, comment.as_deref())?;
         writeln!(writer)?;
     }
     Ok(())
 }
 
-fn write_synonyms<W: Write>(writer: &mut W, synonyms: &[OboSynonym]) -> Result<(), std::io::Error> {
-    for synonym in synonyms.iter().sorted_by_key(|s| &s.synonym) {
+fn write_synonyms<W: Write>(
+    writer: &mut W,
+    synonyms: &[OboSynonym],
+    sort: bool,
+) -> Result<(), std::io::Error> {
+    for synonym in maybe_sort(synonyms.iter(), |a, b| a.synonym.cmp(&b.synonym), sort) {
+        write!(writer, "synonym: \"",)?;
+        escape(writer, &synonym.synonym, Some('\"'))?;
         write!(
             writer,
-            "synonym: \"{}\" {} ",
-            synonym.synonym,
+            "\" {} ",
             synonym.scope.to_string().to_ascii_uppercase()
         )?;
         if let Some(type_name) = &synonym.type_name {
-            write!(writer, "{type_name} ")?;
+            escape(writer, type_name, None)?;
+            write!(writer, " ")?;
         }
-        write_cross_ids(writer, &synonym.cross_references)?;
+        write_cross_ids(writer, &synonym.cross_references, sort)?;
         write_end(
             writer,
             &synonym.trailing_modifiers,
@@ -363,14 +387,16 @@ fn write_xref<W: Write>(
     xref: &[(OboIdentifier, Vec<(Box<str>, Box<str>)>, Option<Box<str>>)],
     options: &OboFormattingOptions,
 ) -> Result<(), std::io::Error> {
-    for (xref, modifiers, comment) in xref.iter().sorted_by_key(|x| &x.0) {
+    for (xref, modifiers, comment) in maybe_sort(xref.iter(), |a, b| a.0.cmp(&b.0), options.sort) {
         write!(writer, "xref: ")?;
         if options.format_xref_as_property_value
             && let Some(tag) = &xref.0
         {
-            write!(writer, "{tag}: {}", xref.1)?;
+            escape(writer, tag, Some(':'))?;
+            write!(writer, ": ")?;
+            escape(writer, &xref.1, None)?;
         } else {
-            write!(writer, "{xref}")?;
+            escape(writer, &xref.to_string(), None)?;
         }
 
         write_end(writer, modifiers, comment.as_deref())?;
@@ -385,14 +411,15 @@ fn write_property_value<W: Write>(
         Box<str>,
         Vec<(OboValue, Vec<(Box<str>, Box<str>)>, Option<Box<str>>)>,
     >,
+    sort: bool,
 ) -> Result<(), std::io::Error> {
-    for (key, values) in property_values.iter().sorted_by_key(|(k, _)| *k) {
+    for (key, values) in maybe_sort(property_values.iter(), |a, b| a.0.cmp(b.0), sort) {
         for (value, modifiers, comment) in values.iter().sorted() {
-            write!(
-                writer,
-                "property_value: {key}: \"{value}\" xsd:{}",
-                value.datatype()
-            )?;
+            write!(writer, "property_value: ",)?;
+            escape(writer, key, Some(':'))?;
+            write!(writer, ": \"")?;
+            escape(writer, &value.to_string(), Some('\"'))?;
+            write!(writer, "\" xsd:{}", value.datatype())?;
             write_end(writer, modifiers, comment.as_deref())?;
             writeln!(writer)?;
         }
@@ -408,13 +435,15 @@ fn write_is_a<W: Write>(
         Vec<(Box<str>, Box<str>)>,
         Option<Box<str>>,
     )],
+    sort: bool,
 ) -> Result<(), std::io::Error> {
-    for (_, xref, modifiers, comment) in relationships
-        .iter()
-        .filter(|a| a.0 == RelationType::IsA)
-        .sorted_by(|a, b| a.1.cmp(&b.1))
-    {
-        write!(writer, "is_a: {xref}")?;
+    for (_, xref, modifiers, comment) in maybe_sort(
+        relationships.iter().filter(|a| a.0 == RelationType::IsA),
+        |a, b| a.1.cmp(&b.1),
+        sort,
+    ) {
+        write!(writer, "is_a: ")?;
+        escape(writer, &xref.to_string(), None)?;
         write_end(writer, modifiers, comment.as_deref())?;
         writeln!(writer)?;
     }
@@ -429,19 +458,23 @@ fn write_relationship<W: Write>(
         Vec<(Box<str>, Box<str>)>,
         Option<Box<str>>,
     )],
+    sort: bool,
 ) -> Result<(), std::io::Error> {
-    for (kind, xref, modifiers, comment) in relationships
-        .iter()
-        .filter_map(|a| {
+    for (kind, xref, modifiers, comment) in maybe_sort(
+        relationships.iter().filter_map(|a| {
             if let RelationType::Other(t) = &a.0 {
                 Some((t, &a.1, &a.2, &a.3))
             } else {
                 None
             }
-        })
-        .sorted_by(|a, b| a.0.cmp(b.0).then(a.1.cmp(b.1)))
-    {
-        write!(writer, "relationship: {kind} {xref}")?;
+        }),
+        |a, b| a.0.cmp(b.0).then(a.1.cmp(b.1)),
+        sort,
+    ) {
+        write!(writer, "relationship: ")?;
+        escape(writer, kind, None)?;
+        write!(writer, " ")?;
+        escape(writer, &xref.to_string(), None)?;
         write_end(writer, modifiers, comment.as_deref())?;
         writeln!(writer)?;
     }
@@ -451,23 +484,25 @@ fn write_relationship<W: Write>(
 fn write_cross_ids<W: Write>(
     writer: &mut W,
     cross_ids: &[(Option<Box<str>>, Box<str>)],
+    sort: bool,
 ) -> Result<(), std::io::Error> {
     write!(writer, "[")?;
     let mut first = true;
-    for (tag, value) in cross_ids
-        .iter()
-        .unique()
-        .sorted_unstable_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
-    {
+    for (tag, value) in maybe_sort(
+        cross_ids.iter().unique(),
+        |a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)),
+        sort,
+    ) {
         if first {
             first = false;
         } else {
             write!(writer, ", ")?;
         }
         if let Some(tag) = &tag {
-            write!(writer, "{tag}:")?;
+            escape(writer, tag, Some('['))?;
+            write!(writer, ":")?;
         }
-        write!(writer, "{value}")?;
+        escape(writer, value, Some('['))?;
     }
     write!(writer, "]")?;
     Ok(())
@@ -487,12 +522,15 @@ fn write_end<W: Write>(
             } else {
                 write!(writer, ", ")?;
             }
-            write!(writer, "{tag}={value}")?;
+            escape(writer, tag, Some('{'))?;
+            write!(writer, "=")?;
+            escape(writer, value, Some('{'))?;
         }
         write!(writer, "}}")?;
     }
     if let Some(comment) = &comment {
-        write!(writer, " ! {comment}")?;
+        write!(writer, " ! ")?;
+        escape(writer, comment, None)?;
     }
     Ok(())
 }
@@ -508,11 +546,20 @@ fn escape<W: Write>(
             | ('!', None)
             | ('[' | ']', Some('['))
             | ('{' | '}', Some('{'))
-            | ('\"', Some('\"')) => write!(writer, "\\")?,
+            | ('\"', Some('\"'))
+            | (':', Some(':')) => write!(writer, "\\")?,
             _ => (),
         }
         write!(writer, "{c}")?;
     }
 
     Ok(())
+}
+
+fn maybe_sort<T>(
+    iter: impl Iterator<Item = T>,
+    f: impl Fn(&T, &T) -> Ordering,
+    sort: bool,
+) -> impl Iterator<Item = T> {
+    iter.sorted_by(|a, b| if sort { f(a, b) } else { Ordering::Equal })
 }
