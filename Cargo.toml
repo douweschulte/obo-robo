@@ -7,8 +7,10 @@ edition = "2024"
 chrono = "*"
 clap = {version = "*", features = ["cargo", "derive"]}
 itertools = "*"
-mzcore = {path="../mzcore/mzcore"}
-mzcv = {path="../mzcore/mzcv"}
+mzcore = "0.2.0"
+mzcv = "0.3.0"
+#mzcore = {path="../mzcore/mzcore"}
+#mzcv = {path="../mzcore/mzcv"}
 
 [lints.rust]
 ambiguous_negative_literals = "warn"

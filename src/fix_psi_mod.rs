@@ -1,7 +1,7 @@
 use std::{collections::HashMap, str::FromStr};
 
 use mzcore::{
-    chemistry::{MolecularFormula, MultiChemical},
+    chemistry::{AmbiguousMolecule, MolecularFormula},
     sequence::AminoAcid,
 };
 use mzcv::{OboIdentifier, OboOntology};
@@ -312,7 +312,7 @@ impl PsiOrigin {
         formulas: &HashMap<OboIdentifier, MolecularFormula>,
     ) -> Option<MolecularFormula> {
         match self {
-            Self::AminoAcid(a) => a.single_formula(),
+            Self::AminoAcid(a) => a.formulas().single(),
             Self::Modification(m) => formulas.get(m).cloned(),
         }
     }
