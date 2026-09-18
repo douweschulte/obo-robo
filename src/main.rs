@@ -23,6 +23,10 @@ use crate::{
     update_psi_mod::psi_mod_proper_style,
 };
 
+// TODO: add warning for missing `def` on term
+// TODO: add fail for missing subset definition on term in PSI-MS
+// TODO: check for missing subset defs
+
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
