@@ -64,34 +64,32 @@ pub fn fix_psi_mod(ontology: &mut OboOntology) -> Result<(), Vec<String>> {
             let trimmed = entry.0.1.trim().trim_matches('\"');
             if trimmed.eq_ignore_ascii_case("none") {
                 None
+            } else if let Ok(v) = trimmed.split(',').map(str::parse).collect() {
+                Some(v)
             } else {
-                match trimmed.split(',').map(|s| s.parse()).collect() {
-                    Ok(v) => Some(v),
-                    Err(()) => {
-                        errors.push(format!("{}: Invalid Origin", obj.id));
-                        None
-                    }
-                }
+                errors.push(format!("{}: Invalid Origin", obj.id));
+                None
             }
         } else {
             None
         };
 
-        if let Some(origin) = origin {
-            if let Some(base) = origin
-                .iter()
-                .fold(Some(MolecularFormula::default()), |acc, o| {
-                    acc.and_then(|a| o.full(&formulas).map(|b| a + b))
-                })
+        match origin {
+            Some(origin)
+                if let Some(base) = origin
+                    .iter()
+                    .try_fold(MolecularFormula::default(), |acc, o| {
+                        o.full(&formulas).map(|b| acc + b)
+                    }) =>
             {
                 match (&diff_formula, &full_formula) {
                     (Some(d), Some(f)) => {
                         let s = &base + d;
                         if s != *f {
                             errors.push(format!(
-                                "{}: DiffFormula '{d}' plus the origins '{base}' (summed '{s}') do not match with the Formula '{f}' difference is '{}' (summed - Formula)",
-                                obj.id,&s - f
-                            ));
+                                    "{}: DiffFormula '{d}' plus the origins '{base}' (summed '{s}') do not match with the Formula '{f}' difference is '{}' (summed - Formula)",
+                                    obj.id,&s - f
+                                ));
                         }
                     }
                     (Some(d), None) => {
@@ -103,6 +101,7 @@ pub fn fix_psi_mod(ontology: &mut OboOntology) -> Result<(), Vec<String>> {
                     (None, None) => (),
                 }
             }
+            _ => (),
         }
 
         if let Some(formula) = diff_formula {
@@ -323,15 +322,18 @@ impl FromStr for PsiOrigin {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let s = s.trim();
 
-        if let Ok(aa) = s.parse::<AminoAcid>() {
-            Ok(Self::AminoAcid(aa))
-        } else if s.contains(':')
-            && let Ok(id) = s.parse()
-        {
-            Ok(Self::Modification(id))
-        } else {
-            Err(())
-        }
+        s.parse::<AminoAcid>().map_or_else(
+            |()| {
+                if s.contains(':')
+                    && let Ok(id) = s.parse()
+                {
+                    Ok(Self::Modification(id))
+                } else {
+                    Err(())
+                }
+            },
+            |aa| Ok(Self::AminoAcid(aa)),
+        )
     }
 }
 

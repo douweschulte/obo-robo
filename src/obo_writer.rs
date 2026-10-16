@@ -360,7 +360,7 @@ fn write_synonyms<W: Write>(
     sort: bool,
 ) -> Result<(), std::io::Error> {
     for synonym in maybe_sort(synonyms.iter(), |a, b| a.synonym.cmp(&b.synonym), sort) {
-        write!(writer, "synonym: \"",)?;
+        write!(writer, "synonym: \"")?;
         escape(writer, &synonym.synonym, Some('\"'))?;
         write!(
             writer,
@@ -415,7 +415,7 @@ fn write_property_value<W: Write>(
 ) -> Result<(), std::io::Error> {
     for (key, values) in maybe_sort(property_values.iter(), |a, b| a.0.cmp(b.0), sort) {
         for (value, modifiers, comment) in values.iter().sorted() {
-            write!(writer, "property_value: ",)?;
+            write!(writer, "property_value: ")?;
             escape(writer, key, Some(':'))?;
             write!(writer, ": \"")?;
             escape(writer, &value.to_string(), Some('\"'))?;
