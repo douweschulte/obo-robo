@@ -19,3 +19,11 @@ Some additional commands only work in `fix` mode:
 Follows:
 - <https://owlcollab.github.io/oboformat/doc/GO.format.obo-1_4.html>
 - <https://owlcollab.github.io/oboformat/doc/obo-syntax.html>
+
+# License
+
+MIT or Apache-2.0
+
+# LLM Usage
+
+No LLMs (or related technologies) have been used in the creation of this software.
