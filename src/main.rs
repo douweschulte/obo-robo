@@ -86,8 +86,11 @@ fn main() -> ExitCode {
         Action::Lint => {
             if let Some(mut lines) = args.changed_line_numbers {
                 lines.sort_unstable();
-                let items = detect_items(&lines, &args.path);
+                let (version, items) = detect_items(&lines, &args.path);
                 println!("Changed items: {}", items.iter().sorted().join(", "));
+                if version {
+                    println!("Version has been touched");
+                }
                 let _ = validate(&file, Some(&items));
             } else {
                 let _ = validate(&file, None);
@@ -100,6 +103,13 @@ fn main() -> ExitCode {
         ),
         Action::Fix => {
             let mut error = false;
+            let version_touched = if let Some(mut lines) = args.changed_line_numbers {
+                lines.sort_unstable();
+                let (version, _items) = detect_items(&lines, &args.path);
+                version
+            } else {
+                false
+            };
             if let Err(errs) = fix(&mut file) {
                 eprintln!("{} errors:", errs.len());
                 for err in errs {
@@ -120,24 +130,28 @@ fn main() -> ExitCode {
                     })
                     .as_deref()
                 {
-                    file.data_version = Some(format!("{a}.{b}.{}", c + 1).into());
-                    let now = chrono::Utc::now();
-                    file.date = Some((
-                        now.year_ce().1 as u16,
-                        now.month() as u8,
-                        now.day() as u8,
-                        now.hour() as u8,
-                        now.minute() as u8,
-                    ));
-                    if let Some(line) = file
-                        .headers
-                        .iter_mut()
-                        .find(|h| h.0.eq_ignore_ascii_case("saved-by"))
-                    {
-                        line.1 = author;
+                    if version_touched {
+                        file.data_version = Some(format!("{a}.{b}.{c}").into());
                     } else {
-                        file.headers
-                            .push(("saved-by".into(), author, Vec::new(), None));
+                        file.data_version = Some(format!("{a}.{b}.{}", c + 1).into());
+                        let now = chrono::Utc::now();
+                        file.date = Some((
+                            now.year_ce().1 as u16,
+                            now.month() as u8,
+                            now.day() as u8,
+                            now.hour() as u8,
+                            now.minute() as u8,
+                        ));
+                        if let Some(line) = file
+                            .headers
+                            .iter_mut()
+                            .find(|h| h.0.eq_ignore_ascii_case("saved-by"))
+                        {
+                            line.1 = author;
+                        } else {
+                            file.headers
+                                .push(("saved-by".into(), author, Vec::new(), None));
+                        }
                     }
                 } else {
                     eprintln!(
@@ -414,8 +428,9 @@ fn fix(ontology: &mut OboOntology) -> Result<(), Vec<String>> {
     }
 }
 
-/// Lines needs to be sorted
-fn detect_items(numbers: &[usize], path: impl AsRef<Path>) -> HashSet<OboIdentifier> {
+/// Lines need to be sorted. The output is a boolean indicating if any of the version lines have been altered, and all touched items.
+fn detect_items(numbers: &[usize], path: impl AsRef<Path>) -> (bool, HashSet<OboIdentifier>) {
+    let mut version_touched = false;
     let mut detected = HashSet::new();
     let mut current_item = None;
     let mut lines = BufReader::new(File::open(path).unwrap())
@@ -426,6 +441,7 @@ fn detect_items(numbers: &[usize], path: impl AsRef<Path>) -> HashSet<OboIdentif
         let search_index = search_index.saturating_sub(1);
         for (index, line) in lines.by_ref() {
             let line = line.unwrap();
+            let mut version_line = false;
             if search_index < index {
                 break; // Should not happen unless a single line was in there twice
             }
@@ -434,15 +450,23 @@ fn detect_items(numbers: &[usize], path: impl AsRef<Path>) -> HashSet<OboIdentif
                     || OboIdentifier(None, end.trim().into()),
                     |(t, v)| OboIdentifier(Some(t.trim().into()), v.trim().into()),
                 ));
+            } else if (line.starts_with("data-version:")
+                || line.starts_with("saved-by:")
+                || line.starts_with("date:"))
+                && current_item.is_none()
+            {
+                version_line = true;
             }
             if index == search_index {
                 if let Some(c) = &current_item {
                     detected.insert(c.clone());
+                } else if version_line {
+                    version_touched = true;
                 }
                 break;
             }
         }
     }
 
-    detected
+    (version_touched, detected)
 }
