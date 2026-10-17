@@ -13,6 +13,12 @@ mzcv = "0.3.0"
 #mzcore = {path="../mzcore/mzcore"}
 #mzcv = {path="../mzcore/mzcv"}
 
+[profile.release]
+debug = true
+opt-level = 3
+lto = true
+codegen-units = 1
+
 [lints.rust]
 ambiguous_negative_literals = "warn"
 ambiguous-glob-reexports = "deny"
