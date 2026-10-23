@@ -1,4 +1,7 @@
-use std::{collections::HashMap, str::FromStr};
+use std::{
+    collections::{HashMap, HashSet},
+    str::FromStr,
+};
 
 use mzcore::{
     chemistry::{AmbiguousMolecule, MolecularFormula},
@@ -6,11 +9,17 @@ use mzcore::{
 };
 use mzcv::{OboIdentifier, OboOntology};
 
-pub fn fix_psi_mod(ontology: &mut OboOntology) -> Result<(), Vec<String>> {
+pub fn fix_psi_mod(
+    ontology: &mut OboOntology,
+    subset: Option<&HashSet<OboIdentifier>>,
+) -> Result<(), Vec<String>> {
     let mut errors = Vec::new();
     let mut formulas = HashMap::new();
 
     for obj in &mut ontology.objects {
+        if subset.is_some_and(|s| !s.contains(&obj.id)) {
+            continue;
+        }
         let mut diff_formula = if let Some(entry) = obj
             .xref
             .iter()
@@ -235,8 +244,8 @@ pub fn fix_psi_mod(ontology: &mut OboOntology) -> Result<(), Vec<String>> {
             formulas.insert(obj.id.clone(), formula.clone());
         }
 
-        // TODO: detect missing relationships like `MOD:00842|(13)C labeled residue` `MOD:00843|(15)N labeled residue` and `MOD:00902|modified L-arginine residue`
-        // TODO: figure out the logic of the tagged reagent differences to the labeled residue first `MOD:01431|(2)H deuterium tagged reagent`
+        // TODO: detect missing relationships like 'MOD:00842|(13)C labeled residue' 'MOD:00843|(15)N labeled residue' and 'MOD:00902|modified L-arginine residue'
+        // TODO: figure out the logic of the tagged reagent differences to the labeled residue first 'MOD:01431|(2)H deuterium tagged reagent'
         // if let Some(formula) = diff_formula {
         //     if let Some((_, _, amount)) = formula
         //         .elements()

@@ -23,7 +23,7 @@ use crate::{
     update_psi_mod::psi_mod_proper_style,
 };
 
-// TODO: add warning for missing `def` on term
+// TODO: add warning for missing 'def' on term
 // TODO: add fail for missing subset definition on term in PSI-MS
 // TODO: check for missing subset defs
 
@@ -46,6 +46,9 @@ struct Args {
     /// Keep ordering as much as possible (lines are still reordered based on their line types but otherwise stay stable)
     #[arg(long)]
     keep_ordering: bool,
+    /// Tell that this is a github PR so output stuff in MD and prevent dumping errors in the log
+    #[arg(long)]
+    gh_pr: bool,
 }
 
 fn line_numbers(value: &str) -> Result<Vec<usize>, &'static str> {
@@ -72,29 +75,34 @@ enum Action {
 }
 
 fn main() -> ExitCode {
-    let args = Args::parse();
+    let mut args = Args::parse();
 
     let mut file = match OboOntology::from_file(&args.path) {
         Ok(value) => value,
         Err(err) => {
             eprintln!("{err}");
-            return 3.into();
+            return if args.gh_pr { 0 } else { 3 }.into();
         }
+    };
+    let nl = if args.gh_pr { "<br>" } else { "\n" };
+
+    let (version_touched, changed) = if let Some(lines) = &mut args.changed_line_numbers {
+        lines.sort_unstable();
+        let (version, items) = detect_items(lines, &args.path);
+        (version, Some(items))
+    } else {
+        (false, None)
     };
 
     match &args.action {
         Action::Lint => {
-            if let Some(mut lines) = args.changed_line_numbers {
-                lines.sort_unstable();
-                let (version, items) = detect_items(&lines, &args.path);
-                println!("Changed items: {}", items.iter().sorted().join(", "));
-                if version {
-                    println!("Version has been touched");
+            if let Some(changed) = changed.as_ref() {
+                print!("Changed items: {}{nl}", changed.iter().sorted().join(", "));
+                if version_touched {
+                    print!("Version has been touched{nl}");
                 }
-                let _ = validate(&file, Some(&items));
-            } else {
-                let _ = validate(&file, None);
             }
+            let _ = validate(&file, changed.as_ref(), args.gh_pr);
         }
         Action::Fmt => fmt(
             &file,
@@ -103,18 +111,20 @@ fn main() -> ExitCode {
         ),
         Action::Fix => {
             let mut error = false;
-            let version_touched = if let Some(mut lines) = args.changed_line_numbers {
-                lines.sort_unstable();
-                let (version, _items) = detect_items(&lines, &args.path);
-                version
-            } else {
-                false
-            };
-            if let Err(errs) = fix(&mut file) {
-                eprintln!("{} errors:", errs.len());
-                for err in errs {
-                    eprintln!("::error::{err}");
-                    error = true;
+            if let Err(errs) = fix(&mut file, changed.as_ref()) {
+                if args.gh_pr {
+                    print!("<details><summary>{} Errors</summary>", errs.len());
+                    for err in errs {
+                        print!(" - {}<br>", escape(&err));
+                        error = true;
+                    }
+                    print!("</details>");
+                } else {
+                    eprintln!("{} errors:", errs.len());
+                    for err in errs {
+                        eprintln!("::error::{err}");
+                        error = true;
+                    }
                 }
             }
             if let Some(author) = args.bump {
@@ -165,7 +175,7 @@ fn main() -> ExitCode {
                 args.new_path.as_ref().unwrap_or(&args.path),
                 !args.keep_ordering,
             );
-            if error {
+            if !args.gh_pr && error {
                 return 5.into();
             }
         }
@@ -212,6 +222,15 @@ fn main() -> ExitCode {
     0.into()
 }
 
+fn escape(input: &str) -> String {
+    input
+        .replace('\'', "\'\\\'\'")
+        .replace('\"', "\\\"")
+        .replace('(', "\\(")
+        .replace(')', "\\)")
+        .replace('#', "\\#")
+}
+
 fn fmt(ontology: &OboOntology, path: impl AsRef<Path>, sort: bool) {
     obo_writer::write(
         BufWriter::new(File::create(path).unwrap()),
@@ -227,7 +246,7 @@ fn fmt(ontology: &OboOntology, path: impl AsRef<Path>, sort: bool) {
     .unwrap();
 }
 
-fn validate(ontology: &OboOntology, subset: Option<&HashSet<OboIdentifier>>) -> bool {
+fn validate(ontology: &OboOntology, subset: Option<&HashSet<OboIdentifier>>, gh_pr: bool) -> bool {
     let mut warnings = Vec::new();
     let mut names = HashSet::new();
     let mut definitions = HashSet::new();
@@ -406,21 +425,32 @@ fn validate(ontology: &OboOntology, subset: Option<&HashSet<OboIdentifier>>) -> 
         }
     }
 
-    if !warnings.is_empty() {
-        println!("::warning::Some potential problems where detected");
-    }
-    for (id, warning) in &warnings {
-        println!("::notice::{id}: {warning}");
+    if gh_pr {
+        print!("<details><summary>{} Warnings</summary>", warnings.len());
+        for (id, warning) in &warnings {
+            print!(" - {id}: {}<br>", escape(warning));
+        }
+        print!("</details>");
+    } else {
+        if !warnings.is_empty() {
+            println!("::warning::Some potential problems where detected");
+        }
+        for (id, warning) in &warnings {
+            println!("::notice::{id}: {warning}");
+        }
     }
 
     warnings.is_empty()
 }
 
-fn fix(ontology: &mut OboOntology) -> Result<(), Vec<String>> {
+fn fix(
+    ontology: &mut OboOntology,
+    subset: Option<&HashSet<OboIdentifier>>,
+) -> Result<(), Vec<String>> {
     if let Some((_, name, _, _)) = ontology.headers.iter().find(|h| h.0.as_ref() == "ontology") {
         match name.as_ref() {
             "xlmod" => fix_xlmod::fix_xlmod(ontology),
-            "mod" => fix_psi_mod::fix_psi_mod(ontology),
+            "mod" => fix_psi_mod::fix_psi_mod(ontology, subset),
             _ => Ok(()),
         }
     } else {
