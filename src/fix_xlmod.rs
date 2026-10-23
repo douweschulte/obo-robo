@@ -1,9 +1,18 @@
-use mzcore::chemistry::MolecularFormula;
-use mzcv::{OboOntology, OboValue};
+use std::collections::HashSet;
 
-pub fn fix_xlmod(ontology: &mut OboOntology) -> Result<(), Vec<String>> {
+use mzcore::chemistry::MolecularFormula;
+use mzcv::{OboIdentifier, OboOntology, OboValue};
+
+pub fn fix_xlmod(
+    ontology: &mut OboOntology,
+    subset: Option<&HashSet<OboIdentifier>>,
+    fix_all: bool,
+) -> Result<(), Vec<String>> {
     let mut errors = Vec::new();
     for obj in &mut ontology.objects {
+        if !fix_all && subset.is_some_and(|s| !s.contains(&obj.id)) {
+            continue;
+        }
         let formula_key = if obj.property_values.contains_key("bridgeFormula") {
             "bridgeFormula"
         } else {

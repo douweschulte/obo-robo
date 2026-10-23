@@ -12,12 +12,13 @@ use mzcv::{OboIdentifier, OboOntology};
 pub fn fix_psi_mod(
     ontology: &mut OboOntology,
     subset: Option<&HashSet<OboIdentifier>>,
+    fix_all: bool,
 ) -> Result<(), Vec<String>> {
     let mut errors = Vec::new();
     let mut formulas = HashMap::new();
 
     for obj in &mut ontology.objects {
-        if subset.is_some_and(|s| !s.contains(&obj.id)) {
+        if !fix_all && subset.is_some_and(|s| !s.contains(&obj.id)) {
             continue;
         }
         let mut diff_formula = if let Some(entry) = obj

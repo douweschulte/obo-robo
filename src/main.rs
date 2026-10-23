@@ -40,7 +40,7 @@ struct Args {
     #[arg(long)]
     bump: Option<Box<str>>,
     /// Lint only the changed line numbers
-    #[arg(long, value_parser=line_numbers)]
+    #[arg(long, value_parser=parse_line_numbers)]
     #[allow(unused_qualifications)] // Needed to trick clap
     changed_line_numbers: Option<std::vec::Vec<usize>>,
     /// Keep ordering as much as possible (lines are still reordered based on their line types but otherwise stay stable)
@@ -49,9 +49,12 @@ struct Args {
     /// Tell that this is a github PR so output stuff in MD and prevent dumping errors in the log
     #[arg(long)]
     gh_pr: bool,
+    /// Fix all items even if `changed_line_numbers` is present
+    #[arg(long)]
+    fix_all: bool,
 }
 
-fn line_numbers(value: &str) -> Result<Vec<usize>, &'static str> {
+fn parse_line_numbers(value: &str) -> Result<Vec<usize>, &'static str> {
     Ok(value
         .split(',')
         .filter_map(|v| v.parse().ok())
@@ -111,7 +114,7 @@ fn main() -> ExitCode {
         ),
         Action::Fix => {
             let mut error = false;
-            if let Err(errs) = fix(&mut file, changed.as_ref()) {
+            if let Err(errs) = fix(&mut file, changed.as_ref(), args.fix_all) {
                 if args.gh_pr {
                     print!("<details><summary>{} Errors</summary>", errs.len());
                     for err in errs {
@@ -446,11 +449,12 @@ fn validate(ontology: &OboOntology, subset: Option<&HashSet<OboIdentifier>>, gh_
 fn fix(
     ontology: &mut OboOntology,
     subset: Option<&HashSet<OboIdentifier>>,
+    fix_all: bool,
 ) -> Result<(), Vec<String>> {
     if let Some((_, name, _, _)) = ontology.headers.iter().find(|h| h.0.as_ref() == "ontology") {
         match name.as_ref() {
-            "xlmod" => fix_xlmod::fix_xlmod(ontology),
-            "mod" => fix_psi_mod::fix_psi_mod(ontology, subset),
+            "xlmod" => fix_xlmod::fix_xlmod(ontology, subset, fix_all),
+            "mod" => fix_psi_mod::fix_psi_mod(ontology, subset, fix_all),
             _ => Ok(()),
         }
     } else {

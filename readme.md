@@ -10,13 +10,15 @@ Possible commands:
 - `search`: Load an obo file to search it interactively
 
 This parameter only works with `lint` and `fix`:
-- `changed_line_numbers`: only lint the items that have seen changes to suppress warnings of untouched item.
+- `changed_line_numbers`: only lint and fix the items that have seen changes to suppress warnings of untouched item.
+- `gh_pr`: changes the output format to be better for use in a comment in a GitHub PR
 
 This parameter works with `fmt` and `fix`:
 - `keep_ordering`: keep the original ordering as much as possible. This still reorders based on line type.
 
 This parameter only works with `fix`:
 - `bump`: the author name to bump the version with. This updates the `saved-by` field, the `data-version` version number (patch version bump based on semantic versioning), and sets the `date` field to the current date and time in UTC+0. If `changed_line_numbers` is also supplied it does not change any version (number, author, and date) if the `data-version` or `date` lines have been changed.
+- `fix_all`: fix the whole obo file even if `changed_line_numbers` is given. This is useful because in a combined bump & fix you want to provide the changed numbers to not bump incorrectly but might also want to fix everything.
 
 # Standard
 
