@@ -5,11 +5,12 @@ mod obo_writer;
 mod update_psi_mod;
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs::File,
     io::{BufRead, BufReader, BufWriter, Write},
     path::{Path, PathBuf},
     process::ExitCode,
+    str::FromStr,
 };
 
 use chrono::{Datelike, Timelike};
@@ -26,6 +27,7 @@ use crate::{
 // TODO: add warning for missing 'def' on term
 // TODO: add fail for missing subset definition on term in PSI-MS
 // TODO: check for missing subset defs
+// TODO: check for missing relationship terms
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -196,30 +198,7 @@ fn main() -> ExitCode {
                 file.version().version.unwrap_or_default(),
                 file.objects.len()
             );
-            let mut answer = String::new();
-            loop {
-                answer.clear();
-                print!(">");
-                std::io::stdout().flush().unwrap();
-                std::io::stdin().read_line(&mut answer).unwrap();
-
-                let a = answer.trim();
-                if a.eq_ignore_ascii_case("quit") || a.eq_ignore_ascii_case("q") {
-                    break;
-                }
-
-                for obj in &file.objects {
-                    if obj.lines["name"][0].0.trim().eq_ignore_ascii_case(a)
-                        || obj
-                            .synonyms
-                            .iter()
-                            .any(|s| s.synonym.eq_ignore_ascii_case(a))
-                    {
-                        write_object(std::io::stdout(), obj, &OboFormattingOptions::default())
-                            .unwrap();
-                    }
-                }
-            }
+            interactive_session(&file);
         }
     }
     0.into()
@@ -503,4 +482,122 @@ fn detect_items(numbers: &[usize], path: impl AsRef<Path>) -> (bool, HashSet<Obo
     }
 
     (version_touched, detected)
+}
+
+fn interactive_session(ontology: &OboOntology) {
+    let name_index: HashMap<String, usize> = ontology
+        .objects
+        .iter()
+        .enumerate()
+        .map(|(i, o)| (o.lines["name"][0].0.trim().to_ascii_lowercase(), i))
+        .collect();
+    let synonym_index: HashMap<String, usize> = ontology
+        .objects
+        .iter()
+        .enumerate()
+        .flat_map(|(i, o)| {
+            o.synonyms
+                .iter()
+                .map(move |s| (s.synonym.trim().to_ascii_lowercase(), i))
+        })
+        .collect();
+    let word_index: HashMap<String, Vec<usize>> = ontology
+        .objects
+        .iter()
+        .enumerate()
+        .flat_map(|(i, o)| {
+            get_words(&o.lines["name"][0].0)
+                .into_iter()
+                .chain(o.synonyms.iter().flat_map(move |s| get_words(&s.synonym)))
+                .chain(o.definition.iter().flat_map(|d| get_words(&d.0)))
+                .map(move |w| (w, i))
+        })
+        .into_group_map();
+    let id_index: HashMap<OboIdentifier, usize> = ontology
+        .objects
+        .iter()
+        .enumerate()
+        .map(|(i, o)| (o.id.clone(), i))
+        .collect();
+
+    let mut answer = String::new();
+    loop {
+        answer.clear();
+        println!();
+        print!(">");
+        std::io::stdout().flush().unwrap();
+        std::io::stdin().read_line(&mut answer).unwrap();
+
+        let a = answer.trim();
+        if a.eq_ignore_ascii_case("quit") || a.eq_ignore_ascii_case("q") {
+            break;
+        }
+        let lowercase = a.to_ascii_lowercase();
+
+        if let Ok(id) = OboIdentifier::from_str(a)
+            && let Some(v) = id_index.get(&id)
+        {
+            write_object(
+                std::io::stdout(),
+                &ontology.objects[*v],
+                &OboFormattingOptions::default(),
+            )
+            .unwrap();
+        } else if let Some(v) = name_index.get(&lowercase) {
+            write_object(
+                std::io::stdout(),
+                &ontology.objects[*v],
+                &OboFormattingOptions::default(),
+            )
+            .unwrap();
+        } else if let Some(v) = synonym_index.get(&lowercase) {
+            write_object(
+                std::io::stdout(),
+                &ontology.objects[*v],
+                &OboFormattingOptions::default(),
+            )
+            .unwrap();
+        } else {
+            let mut matches = false;
+            for (_, v, _) in name_index
+                .iter()
+                .chain(synonym_index.iter())
+                .filter_map(|(n, i)| {
+                    let d = mzcv::text::levenshtein_distance(n, &lowercase);
+                    if d < 5 { Some((n, i, d)) } else { None }
+                })
+                .k_smallest_by(10, |a, b| a.2.cmp(&b.2))
+            {
+                write_object(
+                    std::io::stdout(),
+                    &ontology.objects[*v],
+                    &OboFormattingOptions::default(),
+                )
+                .unwrap();
+                matches = true;
+            }
+            if !matches {
+                for v in get_words(a)
+                    .iter()
+                    .flat_map(|w| word_index.get(w).map_or_default(Vec::as_slice))
+                    .copied()
+                    .unique()
+                    .sorted()
+                {
+                    write_object(
+                        std::io::stdout(),
+                        &ontology.objects[v],
+                        &OboFormattingOptions::default(),
+                    )
+                    .unwrap();
+                }
+            }
+        }
+    }
+}
+
+fn get_words(w: &str) -> Vec<String> {
+    w.split_ascii_whitespace()
+        .map(str::to_ascii_lowercase)
+        .collect()
 }
