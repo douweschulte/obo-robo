@@ -519,6 +519,24 @@ fn interactive_session(ontology: &OboOntology) {
         .enumerate()
         .map(|(i, o)| (o.id.clone(), i))
         .collect();
+    let ancestors_index = ontology
+        .objects
+        .iter()
+        .flat_map(|o| {
+            o.relationship
+                .iter()
+                .map(|r| (o.id.clone(), (r.1.clone(), r.0.clone())))
+        })
+        .into_group_map();
+    let children_index = ontology
+        .objects
+        .iter()
+        .flat_map(|o| {
+            o.relationship
+                .iter()
+                .map(|r| (r.1.clone(), (o.id.clone(), r.0.clone())))
+        })
+        .into_group_map();
 
     let mut answer = String::new();
     loop {
@@ -541,7 +559,7 @@ fn interactive_session(ontology: &OboOntology) {
                 .or_else(|| name_index.get(tail))
                 .or_else(|| synonym_index.get(tail))
         {
-            draw_tree(ontology, *id, &id_index, true, true, None);
+            draw_tree(ontology, *id, &id_index, &ancestors_index, None);
             continue;
         }
 
@@ -552,33 +570,22 @@ fn interactive_session(ontology: &OboOntology) {
                 .or_else(|| name_index.get(tail))
                 .or_else(|| synonym_index.get(tail))
         {
-            draw_tree(ontology, *id, &id_index, false, true, None);
+            draw_tree(ontology, *id, &id_index, &children_index, None);
             continue;
         }
 
-        if let Ok(id) = OboIdentifier::from_str(a)
-            && let Some(v) = id_index.get(&id)
+        if let Some(id) = OboIdentifier::from_str(a)
+            .ok()
+            .and_then(|id| id_index.get(&id))
+            .or_else(|| name_index.get(&lowercase))
+            .or_else(|| synonym_index.get(&lowercase))
         {
-            write_object(
-                std::io::stdout(),
-                &ontology.objects[*v],
-                &OboFormattingOptions::default(),
-            )
-            .unwrap();
-        } else if let Some(v) = name_index.get(&lowercase) {
-            write_object(
-                std::io::stdout(),
-                &ontology.objects[*v],
-                &OboFormattingOptions::default(),
-            )
-            .unwrap();
-        } else if let Some(v) = synonym_index.get(&lowercase) {
-            write_object(
-                std::io::stdout(),
-                &ontology.objects[*v],
-                &OboFormattingOptions::default(),
-            )
-            .unwrap();
+            let o = &ontology.objects[*id];
+            write_object(std::io::stdout(), o, &OboFormattingOptions::default()).unwrap();
+            println!(
+                "=> {} direct children",
+                children_index.get(&o.id).map_or_default(Vec::len)
+            );
         } else {
             let mut matches = false;
             for (_, v, _) in name_index
@@ -590,12 +597,12 @@ fn interactive_session(ontology: &OboOntology) {
                 })
                 .k_smallest_by(10, |a, b| a.2.cmp(&b.2))
             {
-                write_object(
-                    std::io::stdout(),
-                    &ontology.objects[*v],
-                    &OboFormattingOptions::default(),
-                )
-                .unwrap();
+                let o = &ontology.objects[*v];
+                println!(
+                    "{}={}",
+                    o.curie(),
+                    o.definition.as_ref().map_or_default(|o| o.0.as_ref())
+                );
                 matches = true;
             }
             if !matches {
@@ -606,12 +613,12 @@ fn interactive_session(ontology: &OboOntology) {
                     .unique()
                     .sorted()
                 {
-                    write_object(
-                        std::io::stdout(),
-                        &ontology.objects[v],
-                        &OboFormattingOptions::default(),
-                    )
-                    .unwrap();
+                    let o = &ontology.objects[v];
+                    println!(
+                        "{}={}",
+                        o.curie(),
+                        o.definition.as_ref().map_or_default(|o| o.0.as_ref())
+                    );
                 }
             }
         }
@@ -628,40 +635,15 @@ fn draw_tree(
     ontology: &OboOntology,
     term: usize,
     id_index: &HashMap<OboIdentifier, usize>,
-    ancestors: bool,
-    allow_relations: bool,
+    connections: &HashMap<OboIdentifier, Vec<(OboIdentifier, RelationType)>>,
     depth: Option<usize>,
 ) {
-    let connections = if ancestors {
-        ontology
-            .objects
-            .iter()
-            .flat_map(|o| {
-                o.relationship
-                    .iter()
-                    .filter(|r| allow_relations || r.0 == RelationType::IsA)
-                    .map(|r| (o.id.clone(), (r.1.clone(), r.0.clone())))
-            })
-            .into_group_map()
-    } else {
-        ontology
-            .objects
-            .iter()
-            .flat_map(|o| {
-                o.relationship
-                    .iter()
-                    .filter(|r| allow_relations || r.0 == RelationType::IsA)
-                    .map(|r| (r.1.clone(), (o.id.clone(), r.0.clone())))
-            })
-            .into_group_map()
-    };
-
     let tree = Tree::from_stanza(
         ontology,
         &ontology.objects[term].id,
         &RelationType::IsA,
         id_index,
-        &connections,
+        connections,
         depth,
     );
     tree.draw(&[], '╤', &mut HashSet::new());
@@ -729,7 +711,7 @@ impl Tree {
                 .collect::<String>(),
             match &self.relation {
                 RelationType::IsA => "╸".to_string(),
-                RelationType::Other(rel) => format!("[{rel}]╸"),
+                RelationType::Other(rel) => format!("[{rel}]"),
             },
             self.name
         );
