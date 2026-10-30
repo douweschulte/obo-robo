@@ -17,7 +17,7 @@ use chrono::{Datelike, Timelike};
 use clap::{Parser, ValueEnum};
 use itertools::Itertools;
 use mzcore::sequence::CrossId;
-use mzcv::{OboIdentifier, OboOntology, OboStanzaType, RelationType, SynonymScope};
+use mzcv::{OboIdentifier, OboOntology, OboStanza, OboStanzaType, RelationType, SynonymScope};
 
 use crate::{
     obo_writer::{OboFormattingOptions, write_object},
@@ -534,6 +534,28 @@ fn interactive_session(ontology: &OboOntology) {
         }
         let lowercase = a.to_ascii_lowercase();
 
+        if let Some(tail) = lowercase.strip_prefix("ancestors ")
+            && let Some(id) = OboIdentifier::from_str(tail)
+                .ok()
+                .and_then(|id| id_index.get(&id))
+                .or_else(|| name_index.get(tail))
+                .or_else(|| synonym_index.get(tail))
+        {
+            draw_tree(ontology, *id, &id_index, true, true, None);
+            continue;
+        }
+
+        if let Some(tail) = lowercase.strip_prefix("children ")
+            && let Some(id) = OboIdentifier::from_str(tail)
+                .ok()
+                .and_then(|id| id_index.get(&id))
+                .or_else(|| name_index.get(tail))
+                .or_else(|| synonym_index.get(tail))
+        {
+            draw_tree(ontology, *id, &id_index, false, true, None);
+            continue;
+        }
+
         if let Ok(id) = OboIdentifier::from_str(a)
             && let Some(v) = id_index.get(&id)
         {
@@ -600,4 +622,180 @@ fn get_words(w: &str) -> Vec<String> {
     w.split_ascii_whitespace()
         .map(str::to_ascii_lowercase)
         .collect()
+}
+
+fn draw_tree(
+    ontology: &OboOntology,
+    term: usize,
+    id_index: &HashMap<OboIdentifier, usize>,
+    ancestors: bool,
+    allow_relations: bool,
+    depth: Option<usize>,
+) {
+    let connections = if ancestors {
+        ontology
+            .objects
+            .iter()
+            .flat_map(|o| {
+                o.relationship
+                    .iter()
+                    .filter(|r| allow_relations || r.0 == RelationType::IsA)
+                    .map(|r| (o.id.clone(), (r.1.clone(), r.0.clone())))
+            })
+            .into_group_map()
+    } else {
+        ontology
+            .objects
+            .iter()
+            .flat_map(|o| {
+                o.relationship
+                    .iter()
+                    .filter(|r| allow_relations || r.0 == RelationType::IsA)
+                    .map(|r| (r.1.clone(), (o.id.clone(), r.0.clone())))
+            })
+            .into_group_map()
+    };
+
+    let tree = Tree::from_stanza(
+        ontology,
+        &ontology.objects[term].id,
+        &RelationType::IsA,
+        id_index,
+        &connections,
+        depth,
+    );
+    tree.draw(&[], '╤', &mut HashSet::new());
+}
+
+struct Tree {
+    name: String,
+    relation: RelationType,
+    branches: Vec<Self>,
+}
+
+impl Tree {
+    fn from_stanza(
+        ontology: &OboOntology,
+        term: &OboIdentifier,
+        relation: &RelationType,
+        id_index: &HashMap<OboIdentifier, usize>,
+        connections: &HashMap<OboIdentifier, Vec<(OboIdentifier, RelationType)>>,
+        depth: Option<usize>,
+    ) -> Self {
+        if let Some(obj) = id_index.get(term)
+            && let Some(object) = ontology.objects.get(*obj)
+        {
+            Self {
+                name: object.curie(),
+                relation: relation.clone(),
+                branches: if depth.is_none_or(|d| d > 0) {
+                    {
+                        connections
+                            .get(term)
+                            .iter()
+                            .flat_map(|c| {
+                                c.iter().map(|(c, r)| {
+                                    Self::from_stanza(
+                                        ontology,
+                                        c,
+                                        r,
+                                        id_index,
+                                        connections,
+                                        depth.map(|d| d - 1),
+                                    )
+                                })
+                            })
+                            .collect()
+                    }
+                } else {
+                    Vec::new()
+                },
+            }
+        } else {
+            Self {
+                name: term.to_string(),
+                relation: relation.clone(),
+                branches: Vec::new(),
+            }
+        }
+    }
+
+    fn draw(&self, previous_levels: &[BranchState], indicator: char, drawn: &mut HashSet<String>) {
+        print!(
+            "{}{indicator}{}{}",
+            previous_levels
+                .iter()
+                .map(|branch| branch.char())
+                .collect::<String>(),
+            match &self.relation {
+                RelationType::IsA => "╸".to_string(),
+                RelationType::Other(rel) => format!("[{rel}]╸"),
+            },
+            self.name
+        );
+        if drawn.contains(&self.name) {
+            println!(" (*)");
+        } else {
+            println!();
+            drawn.insert(self.name.clone());
+
+            for (i, child) in self.branches.iter().enumerate() {
+                let mut branches = previous_levels.iter().map(|b| b.next()).collect::<Vec<_>>();
+                branches.push(if i == self.branches.len() - 1 {
+                    BranchState::Last
+                } else {
+                    BranchState::MiddleConnection
+                });
+                child.draw(
+                    &branches,
+                    if child.branches.is_empty() {
+                        '─'
+                    } else {
+                        '┬'
+                    },
+                    drawn,
+                );
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum BranchState {
+    MiddleConnection,
+    Middle,
+    Last,
+    Empty,
+}
+
+impl BranchState {
+    const fn next(self) -> Self {
+        match self {
+            Self::MiddleConnection | Self::Middle => Self::Middle,
+            Self::Last | Self::Empty => Self::Empty,
+        }
+    }
+
+    const fn char(self) -> char {
+        match self {
+            Self::MiddleConnection => '├',
+            Self::Middle => '│',
+            Self::Last => '└',
+            Self::Empty => ' ',
+        }
+    }
+}
+
+trait OboExtended {
+    fn name(&self) -> &str;
+    fn curie(&self) -> String;
+}
+
+impl OboExtended for OboStanza {
+    fn name(&self) -> &str {
+        &self.lines["name"][0].0
+    }
+    fn curie(&self) -> String {
+        format!("{}|{}", self.id, self.name())
+    }
 }
