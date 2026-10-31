@@ -13,7 +13,7 @@ pub fn fix_psi_mod(
     ontology: &mut OboOntology,
     subset: Option<&HashSet<OboIdentifier>>,
     fix_all: bool,
-) -> Result<(), Vec<String>> {
+) -> Result<(), Vec<(OboIdentifier, String)>> {
     let mut errors = Vec::new();
     let mut formulas = HashMap::new();
 
@@ -33,7 +33,7 @@ pub fn fix_psi_mod(
                 match MolecularFormula::psi_mod(trimmed) {
                     Ok(formula) => Some(formula),
                     Err(err) => {
-                        errors.push(format!("{}: Invalid DiffFormula: {}", obj.id, err));
+                        errors.push((obj.id.clone(), format!("Invalid DiffFormula: {err}")));
                         None
                     }
                 }
@@ -57,7 +57,7 @@ pub fn fix_psi_mod(
                         Some(formula)
                     }
                     Err(err) => {
-                        errors.push(format!("{}: Invalid Formula: {}", obj.id, err));
+                        errors.push((obj.id.clone(), format!("Invalid Formula: {err}")));
                         None
                     }
                 }
@@ -77,7 +77,7 @@ pub fn fix_psi_mod(
             } else if let Ok(v) = trimmed.split(',').map(str::parse).collect() {
                 Some(v)
             } else {
-                errors.push(format!("{}: Invalid Origin", obj.id));
+                errors.push((obj.id.clone(), "Invalid Origin".to_string()));
                 None
             }
         } else {
@@ -96,10 +96,10 @@ pub fn fix_psi_mod(
                     (Some(d), Some(f)) => {
                         let s = &base + d;
                         if s != *f {
-                            errors.push(format!(
-                                    "{}: DiffFormula '{d}' plus the origins '{base}' (summed '{s}') do not match with the Formula '{f}' difference is '{}' (summed - Formula)",
-                                    obj.id,&s - f
-                                ));
+                            errors.push((obj.id.clone(), format!(
+                                    "DiffFormula '{d}' plus the origins '{base}' (summed '{s}') do not match with the Formula '{f}' difference is '{}' (summed - Formula)",
+                                    &s - f
+                                )));
                         }
                     }
                     (Some(d), None) => {

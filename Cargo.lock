@@ -431,14 +431,12 @@ dependencies = [
 [[package]]
 name = "mzcore"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bca74d59b7c73d9c705a25622c73a186a1bcbf62c0faaf2b97fac8968b4b8d45"
 dependencies = [
  "bincode",
  "context_error",
  "flate2",
  "itertools",
- "mzcv",
+ "mzcv 0.3.0",
  "ordered-float",
  "roxmltree",
  "serde",
@@ -446,6 +444,19 @@ dependencies = [
  "sha2",
  "thin-vec",
  "uom",
+]
+
+[[package]]
+name = "mzcv"
+version = "0.3.0"
+dependencies = [
+ "bincode",
+ "chrono",
+ "context_error",
+ "directories",
+ "flate2",
+ "serde",
+ "sha2",
 ]
 
 [[package]]
@@ -459,7 +470,6 @@ dependencies = [
  "context_error",
  "directories",
  "flate2",
- "serde",
  "sha2",
 ]
 
@@ -521,7 +531,7 @@ dependencies = [
  "clap",
  "itertools",
  "mzcore",
- "mzcv",
+ "mzcv 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

@@ -8,9 +8,9 @@ license = "MIT OR Apache-2.0"
 chrono = "*"
 clap = {version = "*", features = ["cargo", "derive"]}
 itertools = "*"
-mzcore = "0.2.0"
+#mzcore = "0.2.0"
 mzcv = "0.3.0"
-#mzcore = {path="../mzcore/mzcore"}
+mzcore = {path="../mzcore/mzcore"}
 #mzcv = {path="../mzcore/mzcv"}
 
 [profile.release]

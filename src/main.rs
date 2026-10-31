@@ -1,5 +1,6 @@
 //! Test and validate and format Obo files
 mod fix_psi_mod;
+mod fix_psi_ms;
 mod fix_xlmod;
 mod obo_writer;
 mod update_psi_mod;
@@ -23,8 +24,6 @@ use crate::{
     obo_writer::{OboFormattingOptions, write_object},
     update_psi_mod::psi_mod_proper_style,
 };
-
-// TODO: add fail for missing subset definition on term in PSI-MS
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -52,6 +51,9 @@ struct Args {
     /// Fix all items even if `changed_line_numbers` is present
     #[arg(long)]
     fix_all: bool,
+    /// Fix the cross-ids to use the proper tag
+    #[arg(long)]
+    fix_cross_ids: bool,
 }
 
 #[allow(clippy::unnecessary_wraps)] // Needed for clap
@@ -106,27 +108,43 @@ fn main() -> ExitCode {
                     print!("Version has been touched{nl}");
                 }
             }
-            let _ = validate(&file, changed.as_ref(), args.gh_pr);
+            let warnings = validate(&file, changed.as_ref());
+
+            if args.gh_pr {
+                print!("<details><summary>{} Warnings</summary>", warnings.len());
+                for (id, warning) in &warnings {
+                    print!(" - {id}: {}<br>", escape(warning));
+                }
+                print!("</details>");
+            } else {
+                if !warnings.is_empty() {
+                    println!("::warning::Some potential problems where detected");
+                }
+                for (id, warning) in &warnings {
+                    println!("::notice::{id}: {warning}");
+                }
+            }
         }
         Action::Fmt => fmt(
             &file,
             args.new_path.as_ref().unwrap_or(&args.path),
             !args.keep_ordering,
+            args.fix_cross_ids,
         ),
         Action::Fix => {
             let mut error = false;
             if let Err(errs) = fix(&mut file, changed.as_ref(), args.fix_all) {
                 if args.gh_pr {
                     print!("<details><summary>{} Errors</summary>", errs.len());
-                    for err in errs {
-                        print!(" - {}<br>", escape(&err));
+                    for (id, err) in errs {
+                        print!(" - {id}: {}<br>", escape(&err));
                         error = true;
                     }
                     print!("</details>");
                 } else {
                     eprintln!("{} errors:", errs.len());
-                    for err in errs {
-                        eprintln!("::error::{err}");
+                    for (id, err) in errs {
+                        eprintln!("::error::{id}::{err}");
                         error = true;
                     }
                 }
@@ -178,6 +196,7 @@ fn main() -> ExitCode {
                 &file,
                 args.new_path.as_ref().unwrap_or(&args.path),
                 !args.keep_ordering,
+                args.fix_cross_ids,
             );
             if !args.gh_pr && error {
                 return 5.into();
@@ -189,6 +208,7 @@ fn main() -> ExitCode {
                 &file,
                 args.new_path.as_ref().unwrap_or(&args.path),
                 !args.keep_ordering,
+                args.fix_cross_ids,
             );
         }
         Action::Search => {
@@ -225,7 +245,7 @@ fn escape(input: &str) -> String {
         .replace('#', "\\#")
 }
 
-fn fmt(ontology: &OboOntology, path: impl AsRef<Path>, sort: bool) {
+fn fmt(ontology: &OboOntology, path: impl AsRef<Path>, sort: bool, fix_cross_ids: bool) {
     obo_writer::write(
         BufWriter::new(File::create(path).unwrap()),
         ontology,
@@ -235,12 +255,16 @@ fn fmt(ontology: &OboOntology, path: impl AsRef<Path>, sort: bool) {
                 .iter()
                 .any(|h| h.0.as_ref() == "ontology" && h.1.as_ref() == "mod"),
             sort,
+            fix_cross_ids,
         },
     )
     .unwrap();
 }
 
-fn validate(ontology: &OboOntology, subset: Option<&HashSet<OboIdentifier>>, gh_pr: bool) -> bool {
+fn validate(
+    ontology: &OboOntology,
+    subset: Option<&HashSet<OboIdentifier>>,
+) -> Vec<(OboIdentifier, String)> {
     let mut warnings = Vec::new();
     let mut names = HashSet::new();
     let mut definitions = HashSet::new();
@@ -469,33 +493,19 @@ fn validate(ontology: &OboOntology, subset: Option<&HashSet<OboIdentifier>>, gh_
         }
     }
 
-    if gh_pr {
-        print!("<details><summary>{} Warnings</summary>", warnings.len());
-        for (id, warning) in &warnings {
-            print!(" - {id}: {}<br>", escape(warning));
-        }
-        print!("</details>");
-    } else {
-        if !warnings.is_empty() {
-            println!("::warning::Some potential problems where detected");
-        }
-        for (id, warning) in &warnings {
-            println!("::notice::{id}: {warning}");
-        }
-    }
-
-    warnings.is_empty()
+    warnings
 }
 
 fn fix(
     ontology: &mut OboOntology,
     subset: Option<&HashSet<OboIdentifier>>,
     fix_all: bool,
-) -> Result<(), Vec<String>> {
+) -> Result<(), Vec<(OboIdentifier, String)>> {
     if let Some((_, name, _, _)) = ontology.headers.iter().find(|h| h.0.as_ref() == "ontology") {
         match name.as_ref() {
             "xlmod" => fix_xlmod::fix_xlmod(ontology, subset, fix_all),
             "mod" => fix_psi_mod::fix_psi_mod(ontology, subset, fix_all),
+            "ms" => fix_psi_ms::fix_psi_ms(ontology, subset, fix_all),
             _ => Ok(()),
         }
     } else {

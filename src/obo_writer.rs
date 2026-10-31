@@ -1,4 +1,5 @@
 use itertools::Itertools;
+use mzcore::sequence::CrossId;
 use std::{cmp::Ordering, collections::HashMap, io::Write};
 
 use mzcv::{
@@ -11,6 +12,8 @@ pub struct OboFormattingOptions {
     pub format_xref_as_property_value: bool,
     /// Sort the lines and values where possible
     pub sort: bool,
+    /// Fix the cross-id tags to match the proper name as defined in
+    pub fix_cross_ids: bool,
 }
 
 // TODO: escape all written values (e.g. regular expression names)
@@ -79,10 +82,20 @@ fn write_term<W: Write>(
     write_lines(writer, &object.lines, "name", options.sort)?;
     write_lines(writer, &object.lines, "namespace", options.sort)?;
     write_lines(writer, &object.lines, "alt_id", options.sort)?;
-    write_def(writer, object.definition.as_ref(), options.sort)?;
+    write_def(
+        writer,
+        object.definition.as_ref(),
+        options.sort,
+        options.fix_cross_ids,
+    )?;
     write_lines(writer, &object.lines, "comment", options.sort)?;
     write_lines(writer, &object.lines, "subset", options.sort)?;
-    write_synonyms(writer, &object.synonyms, options.sort)?;
+    write_synonyms(
+        writer,
+        &object.synonyms,
+        options.sort,
+        options.fix_cross_ids,
+    )?;
     write_xref(writer, &object.xref, options)?;
     write_lines(writer, &object.lines, "builtin", options.sort)?;
     write_property_value(writer, &object.property_values, options.sort)?;
@@ -152,10 +165,20 @@ fn write_typedef<W: Write>(
     write_lines(writer, &object.lines, "name", options.sort)?;
     write_lines(writer, &object.lines, "namespace", options.sort)?;
     write_lines(writer, &object.lines, "alt_id", options.sort)?;
-    write_def(writer, object.definition.as_ref(), options.sort)?;
+    write_def(
+        writer,
+        object.definition.as_ref(),
+        options.sort,
+        options.fix_cross_ids,
+    )?;
     write_lines(writer, &object.lines, "comment", options.sort)?;
     write_lines(writer, &object.lines, "subset", options.sort)?;
-    write_synonyms(writer, &object.synonyms, options.sort)?;
+    write_synonyms(
+        writer,
+        &object.synonyms,
+        options.sort,
+        options.fix_cross_ids,
+    )?;
     write_xref(writer, &object.xref, options)?;
     write_property_value(writer, &object.property_values, options.sort)?;
     write_lines(writer, &object.lines, "domain", options.sort)?;
@@ -261,10 +284,20 @@ fn write_instance<W: Write>(
     write_lines(writer, &object.lines, "name", options.sort)?;
     write_lines(writer, &object.lines, "namespace", options.sort)?;
     write_lines(writer, &object.lines, "alt_id", options.sort)?;
-    write_def(writer, object.definition.as_ref(), options.sort)?;
+    write_def(
+        writer,
+        object.definition.as_ref(),
+        options.sort,
+        options.fix_cross_ids,
+    )?;
     write_lines(writer, &object.lines, "comment", options.sort)?;
     write_lines(writer, &object.lines, "subset", options.sort)?;
-    write_synonyms(writer, &object.synonyms, options.sort)?;
+    write_synonyms(
+        writer,
+        &object.synonyms,
+        options.sort,
+        options.fix_cross_ids,
+    )?;
     write_xref(writer, &object.xref, options)?;
     write_lines(writer, &object.lines, "instance_of", options.sort)?;
     write_property_value(writer, &object.property_values, options.sort)?;
@@ -342,12 +375,13 @@ fn write_def<W: Write>(
         Option<Box<str>>,
     )>,
     sort: bool,
+    fix_cross_ids: bool,
 ) -> Result<(), std::io::Error> {
     if let Some((def, cross_ids, modifiers, comment)) = def {
         write!(writer, "def: \"")?;
         escape(writer, def, Some('\"'))?;
         write!(writer, "\" ")?;
-        write_cross_ids(writer, cross_ids, sort)?;
+        write_cross_ids(writer, cross_ids, sort, fix_cross_ids)?;
         write_end(writer, modifiers, comment.as_deref())?;
         writeln!(writer)?;
     }
@@ -358,6 +392,7 @@ fn write_synonyms<W: Write>(
     writer: &mut W,
     synonyms: &[OboSynonym],
     sort: bool,
+    fix_cross_ids: bool,
 ) -> Result<(), std::io::Error> {
     for synonym in maybe_sort(synonyms.iter(), |a, b| a.synonym.cmp(&b.synonym), sort) {
         write!(writer, "synonym: \"")?;
@@ -371,7 +406,7 @@ fn write_synonyms<W: Write>(
             escape(writer, type_name, None)?;
             write!(writer, " ")?;
         }
-        write_cross_ids(writer, &synonym.cross_references, sort)?;
+        write_cross_ids(writer, &synonym.cross_references, sort, fix_cross_ids)?;
         write_end(
             writer,
             &synonym.trailing_modifiers,
@@ -485,6 +520,7 @@ fn write_cross_ids<W: Write>(
     writer: &mut W,
     cross_ids: &[(Option<Box<str>>, Box<str>)],
     sort: bool,
+    fix_cross_ids: bool,
 ) -> Result<(), std::io::Error> {
     write!(writer, "[")?;
     let mut first = true;
@@ -498,11 +534,20 @@ fn write_cross_ids<W: Write>(
         } else {
             write!(writer, ", ")?;
         }
-        if let Some(tag) = &tag {
-            escape(writer, tag, Some('['))?;
-            write!(writer, ":")?;
+        if fix_cross_ids && let Ok(id) = CrossId::try_from((tag.clone(), value.clone())) {
+            let (tag, value) = id.to_text();
+            if let Some(tag) = &tag {
+                escape(writer, tag, Some('['))?;
+                write!(writer, ":")?;
+            }
+            escape(writer, value.as_ref(), Some('['))?;
+        } else {
+            if let Some(tag) = &tag {
+                escape(writer, tag, Some('['))?;
+                write!(writer, ":")?;
+            }
+            escape(writer, value, Some('['))?;
         }
-        escape(writer, value, Some('['))?;
     }
     write!(writer, "]")?;
     Ok(())
