@@ -79,7 +79,7 @@ fn write_term<W: Write>(
     write_lines(writer, &object.lines, "name", options.sort)?;
     write_lines(writer, &object.lines, "namespace", options.sort)?;
     write_lines(writer, &object.lines, "alt_id", options.sort)?;
-    write_def(writer, &object.definition, options.sort)?;
+    write_def(writer, object.definition.as_ref(), options.sort)?;
     write_lines(writer, &object.lines, "comment", options.sort)?;
     write_lines(writer, &object.lines, "subset", options.sort)?;
     write_synonyms(writer, &object.synonyms, options.sort)?;
@@ -152,7 +152,7 @@ fn write_typedef<W: Write>(
     write_lines(writer, &object.lines, "name", options.sort)?;
     write_lines(writer, &object.lines, "namespace", options.sort)?;
     write_lines(writer, &object.lines, "alt_id", options.sort)?;
-    write_def(writer, &object.definition, options.sort)?;
+    write_def(writer, object.definition.as_ref(), options.sort)?;
     write_lines(writer, &object.lines, "comment", options.sort)?;
     write_lines(writer, &object.lines, "subset", options.sort)?;
     write_synonyms(writer, &object.synonyms, options.sort)?;
@@ -261,7 +261,7 @@ fn write_instance<W: Write>(
     write_lines(writer, &object.lines, "name", options.sort)?;
     write_lines(writer, &object.lines, "namespace", options.sort)?;
     write_lines(writer, &object.lines, "alt_id", options.sort)?;
-    write_def(writer, &object.definition, options.sort)?;
+    write_def(writer, object.definition.as_ref(), options.sort)?;
     write_lines(writer, &object.lines, "comment", options.sort)?;
     write_lines(writer, &object.lines, "subset", options.sort)?;
     write_synonyms(writer, &object.synonyms, options.sort)?;
@@ -335,7 +335,7 @@ fn write_lines<W: Write>(
 
 fn write_def<W: Write>(
     writer: &mut W,
-    def: &Option<(
+    def: Option<&(
         Box<str>,
         Vec<(Option<Box<str>>, Box<str>)>,
         Vec<(Box<str>, Box<str>)>,

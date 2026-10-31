@@ -24,13 +24,11 @@ use crate::{
     update_psi_mod::psi_mod_proper_style,
 };
 
-// TODO: add warning for missing 'def' on term
 // TODO: add fail for missing subset definition on term in PSI-MS
-// TODO: check for missing subset defs
-// TODO: check for missing relationship terms
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
+#[allow(clippy::struct_excessive_bools)]
 struct Args {
     /// The action to take
     action: Action,
@@ -56,6 +54,7 @@ struct Args {
     fix_all: bool,
 }
 
+#[allow(clippy::unnecessary_wraps)] // Needed for clap
 fn parse_line_numbers(value: &str) -> Result<Vec<usize>, &'static str> {
     Ok(value
         .split(',')
@@ -247,6 +246,25 @@ fn validate(ontology: &OboOntology, subset: Option<&HashSet<OboIdentifier>>, gh_
     let mut definitions = HashSet::new();
     let mut ids = HashSet::new();
 
+    let defined_subsets: HashSet<&str> = ontology
+        .headers
+        .iter()
+        .filter(|h| h.0.as_ref() == "subsetdef")
+        .filter_map(|h| h.1.split(' ').next())
+        .collect();
+    let defined_synonyms: HashSet<&str> = ontology
+        .headers
+        .iter()
+        .filter(|h| h.0.as_ref() == "synonymtypedef")
+        .filter_map(|h| h.1.split(' ').next())
+        .collect();
+    let defined_typedefs: HashSet<String> = ontology
+        .objects
+        .iter()
+        .filter(|o| o.stanza_type == OboStanzaType::Typedef)
+        .flat_map(|o| [o.id.to_string(), o.name().to_string()])
+        .collect();
+
     for obj in &ontology.objects {
         if subset.is_some_and(|s| !s.contains(&obj.id)) {
             continue;
@@ -356,21 +374,30 @@ fn validate(ontology: &OboOntology, subset: Option<&HashSet<OboIdentifier>>, gh_
         // Check for suspicious comments
         let mut parent_stack = Vec::new();
         for (t, rel, _, comment) in &obj.relationship {
+            if let RelationType::Other(reltype) = t
+                && !defined_typedefs.contains(reltype.as_ref())
+            {
+                warnings.push((
+                    obj.id.clone(),
+                    format!("Undefined relationship type was referenced: '{reltype}'"),
+                ));
+            }
             if rel.0.as_ref().is_some_and(|t| t.as_ref() == "xsd") {
                 continue;
             }
             if let Some(relation) = ontology.objects.iter().find(|o| o.id == *rel) {
-                if *t == RelationType::IsA {
-                    if let Some(comment) = comment
-                        && *comment != relation.lines["name"][0].0
-                    {
-                        warnings.push((
+                if let Some(comment) = comment
+                    && *comment != relation.lines["name"][0].0
+                {
+                    warnings.push((
                             obj.id.clone(),
                             format!("This relationship comment looks suspicious: name is '{}' comment is '{comment}'", relation.lines["name"][0].0),
                         ));
-                    }
+                }
+                if *t == RelationType::IsA {
                     parent_stack.push(relation);
                 }
+
                 if relation.obsolete {
                     warnings.push((
                         obj.id.clone(),
@@ -389,33 +416,55 @@ fn validate(ontology: &OboOntology, subset: Option<&HashSet<OboIdentifier>>, gh_
         }
 
         // Check for duplicated inherited values
-        while let Some(ancestor) = parent_stack.pop() {
-            for (key, values) in &ancestor.property_values {
-                if let Some(own_values) = obj.property_values.get(key) {
-                    for own_value in own_values {
-                        if values.iter().any(|v| v.0 == own_value.0) {
-                            warnings.push((
-                                obj.id.clone(),
-                                format!("Overwrote an ancestral property value with the same value: '{}' from ancestor: {}", own_value.0, ancestor.id),
-                            ));
-                        }
-                    }
-                }
-            }
-            for (id, _, _) in &ancestor.xref {
-                if obj.xref.iter().any(|v| v.0 == *id) {
+        // while let Some(ancestor) = parent_stack.pop() {
+        //     for (key, values) in &ancestor.property_values {
+        //         if let Some(own_values) = obj.property_values.get(key) {
+        //             for own_value in own_values {
+        //                 if values.iter().any(|v| v.0 == own_value.0) {
+        //                     warnings.push((
+        //                         obj.id.clone(),
+        //                         format!("Overwrote an ancestral property value with the same value: '{}' from ancestor: {}", own_value.0, ancestor.id),
+        //                     ));
+        //                 }
+        //             }
+        //         }
+        //     }
+        //     for (id, _, _) in &ancestor.xref {
+        //         if obj.xref.iter().any(|v| v.0 == *id) {
+        //             warnings.push((
+        //                 obj.id.clone(),
+        //                 format!("Overwrote an ancestral xref with the same value: '{}' from ancestor: {}", id, ancestor.id),
+        //             ));
+        //         }
+        //     }
+        //     for (t, rel, _, _) in &ancestor.relationship {
+        //         if *t == RelationType::IsA
+        //             && let Some(relation) = ontology.objects.iter().find(|o| o.id == *rel)
+        //         {
+        //             parent_stack.push(relation);
+        //         }
+        //     }
+        // }
+
+        // Check for subsetdefs
+        if let Some(lines) = obj.lines.get("subset") {
+            for line in lines {
+                if !defined_subsets.contains(line.0.as_ref()) {
                     warnings.push((
                         obj.id.clone(),
-                        format!("Overwrote an ancestral xref with the same value: '{}' from ancestor: {}", id, ancestor.id),
+                        format!("Undefined subset was referenced: '{}'", line.0),
                     ));
                 }
             }
-            for (t, rel, _, _) in &ancestor.relationship {
-                if *t == RelationType::IsA
-                    && let Some(relation) = ontology.objects.iter().find(|o| o.id == *rel)
-                {
-                    parent_stack.push(relation);
-                }
+        }
+        for synonym in &obj.synonyms {
+            if let Some(t) = synonym.type_name.as_deref()
+                && !defined_synonyms.contains(t)
+            {
+                warnings.push((
+                    obj.id.clone(),
+                    format!("Undefined synonym was referenced: '{t}'"),
+                ));
             }
         }
     }
@@ -704,7 +753,18 @@ fn draw_tree(
         connections,
         depth,
     );
-    tree.draw(&[], '╤', &mut HashSet::new());
+    tree.draw(
+        &[],
+        if connections
+            .get(&ontology.objects[term].id)
+            .is_some_and(|c| !c.is_empty())
+        {
+            '╤'
+        } else {
+            '═'
+        },
+        &mut HashSet::new(),
+    );
 }
 
 struct Tree {
