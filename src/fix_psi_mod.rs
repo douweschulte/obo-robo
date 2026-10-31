@@ -153,7 +153,7 @@ pub fn fix_psi_mod(
             } else {
                 obj.xref.push((
                     OboIdentifier(
-                        Some("MassMono".into()),
+                        Some("DiffMono".into()),
                         format!("\"{:.6}\"", formula.monoisotopic_mass().value).into(),
                     ),
                     Vec::new(),
@@ -170,7 +170,7 @@ pub fn fix_psi_mod(
             } else {
                 obj.xref.push((
                     OboIdentifier(
-                        Some("MassAvg".into()),
+                        Some("DiffAvg".into()),
                         format!("\"{:.2}\"", formula.average_weight().value).into(),
                     ),
                     Vec::new(),

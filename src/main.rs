@@ -198,7 +198,20 @@ fn main() -> ExitCode {
                 file.version().version.unwrap_or_default(),
                 file.objects.len()
             );
-            interactive_session(&file);
+            while interactive_session(&file) {
+                file = match OboOntology::from_file(&args.path) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        eprintln!("{err}");
+                        return if args.gh_pr { 0 } else { 3 }.into();
+                    }
+                };
+                println!(
+                    "Version: {}, Objects: {}",
+                    file.version().version.unwrap_or_default(),
+                    file.objects.len()
+                );
+            }
         }
     }
     0.into()
@@ -484,7 +497,7 @@ fn detect_items(numbers: &[usize], path: impl AsRef<Path>) -> (bool, HashSet<Obo
     (version_touched, detected)
 }
 
-fn interactive_session(ontology: &OboOntology) {
+fn interactive_session(ontology: &OboOntology) -> bool {
     let name_index: HashMap<String, usize> = ontology
         .objects
         .iter()
@@ -546,82 +559,127 @@ fn interactive_session(ontology: &OboOntology) {
         std::io::stdout().flush().unwrap();
         std::io::stdin().read_line(&mut answer).unwrap();
 
-        let a = answer.trim();
-        if a.eq_ignore_ascii_case("quit") || a.eq_ignore_ascii_case("q") {
-            break;
-        }
-        let lowercase = a.to_ascii_lowercase();
-
-        if let Some(tail) = lowercase.strip_prefix("ancestors ")
-            && let Some(id) = OboIdentifier::from_str(tail)
-                .ok()
-                .and_then(|id| id_index.get(&id))
-                .or_else(|| name_index.get(tail))
-                .or_else(|| synonym_index.get(tail))
-        {
-            draw_tree(ontology, *id, &id_index, &ancestors_index, None);
+        let Ok(command) = InteractiveCommand::from_str(answer.trim()) else {
+            eprint!("Invalid command");
             continue;
-        }
+        };
 
-        if let Some(tail) = lowercase.strip_prefix("children ")
-            && let Some(id) = OboIdentifier::from_str(tail)
-                .ok()
-                .and_then(|id| id_index.get(&id))
-                .or_else(|| name_index.get(tail))
-                .or_else(|| synonym_index.get(tail))
-        {
-            draw_tree(ontology, *id, &id_index, &children_index, None);
-            continue;
-        }
-
-        if let Some(id) = OboIdentifier::from_str(a)
-            .ok()
-            .and_then(|id| id_index.get(&id))
-            .or_else(|| name_index.get(&lowercase))
-            .or_else(|| synonym_index.get(&lowercase))
-        {
-            let o = &ontology.objects[*id];
-            write_object(std::io::stdout(), o, &OboFormattingOptions::default()).unwrap();
-            println!(
-                "=> {} direct children",
-                children_index.get(&o.id).map_or_default(Vec::len)
-            );
-        } else {
-            let mut matches = false;
-            for (_, v, _) in name_index
-                .iter()
-                .chain(synonym_index.iter())
-                .filter_map(|(n, i)| {
-                    let d = mzcv::text::levenshtein_distance(n, &lowercase);
-                    if d < 5 { Some((n, i, d)) } else { None }
-                })
-                .k_smallest_by(10, |a, b| a.2.cmp(&b.2))
-            {
-                let o = &ontology.objects[*v];
-                println!(
-                    "{}={}",
-                    o.curie(),
-                    o.definition.as_ref().map_or_default(|o| o.0.as_ref())
-                );
-                matches = true;
-            }
-            if !matches {
-                for v in get_words(a)
-                    .iter()
-                    .flat_map(|w| word_index.get(w).map_or_default(Vec::as_slice))
-                    .copied()
-                    .unique()
-                    .sorted()
+        match command {
+            InteractiveCommand::Quit => return false,
+            InteractiveCommand::Refresh => return true,
+            InteractiveCommand::Ancestors(depth, term) => {
+                if let Some(id) = OboIdentifier::from_str(&term)
+                    .ok()
+                    .and_then(|id| id_index.get(&id))
+                    .or_else(|| name_index.get(&term))
+                    .or_else(|| synonym_index.get(&term))
                 {
-                    let o = &ontology.objects[v];
+                    draw_tree(ontology, *id, &id_index, &ancestors_index, depth);
+                } else {
+                    eprintln!("Could not find term '{term}'");
+                }
+            }
+            InteractiveCommand::Children(depth, term) => {
+                if let Some(id) = OboIdentifier::from_str(&term)
+                    .ok()
+                    .and_then(|id| id_index.get(&id))
+                    .or_else(|| name_index.get(&term))
+                    .or_else(|| synonym_index.get(&term))
+                {
+                    draw_tree(ontology, *id, &id_index, &children_index, depth);
+                } else {
+                    eprintln!("Could not find term '{term}'");
+                }
+            }
+            InteractiveCommand::Search(term) => {
+                let lowercase = term.to_ascii_lowercase();
+                if let Some(id) = OboIdentifier::from_str(&term)
+                    .ok()
+                    .and_then(|id| id_index.get(&id))
+                    .or_else(|| name_index.get(&lowercase))
+                    .or_else(|| synonym_index.get(&lowercase))
+                {
+                    let o = &ontology.objects[*id];
+                    write_object(std::io::stdout(), o, &OboFormattingOptions::default()).unwrap();
                     println!(
-                        "{}={}",
-                        o.curie(),
-                        o.definition.as_ref().map_or_default(|o| o.0.as_ref())
+                        "=> {} direct children",
+                        children_index.get(&o.id).map_or_default(Vec::len)
                     );
+                } else {
+                    let mut matches = false;
+                    for (_, v, _) in name_index
+                        .iter()
+                        .chain(synonym_index.iter())
+                        .filter_map(|(n, i)| {
+                            let d = mzcv::text::levenshtein_distance(n, &lowercase);
+                            if d < 5 { Some((n, i, d)) } else { None }
+                        })
+                        .k_smallest_by(10, |a, b| a.2.cmp(&b.2))
+                    {
+                        let o = &ontology.objects[*v];
+                        println!(
+                            "{}={}",
+                            o.curie(),
+                            o.definition.as_ref().map_or_default(|o| o.0.as_ref())
+                        );
+                        matches = true;
+                    }
+                    if !matches {
+                        for v in get_words(&term)
+                            .iter()
+                            .flat_map(|w| word_index.get(w).map_or_default(Vec::as_slice))
+                            .copied()
+                            .unique()
+                            .sorted()
+                        {
+                            let o = &ontology.objects[v];
+                            println!(
+                                "{}={}",
+                                o.curie(),
+                                o.definition.as_ref().map_or_default(|o| o.0.as_ref())
+                            );
+                        }
+                    }
                 }
             }
         }
+    }
+}
+
+enum InteractiveCommand {
+    Quit,
+    Refresh,
+    Ancestors(Option<usize>, String),
+    Children(Option<usize>, String),
+    Search(String),
+}
+
+impl FromStr for InteractiveCommand {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.eq_ignore_ascii_case("quit") || s.eq_ignore_ascii_case("q") {
+            return Ok(Self::Quit);
+        }
+        if s.eq_ignore_ascii_case("refresh") || s.eq_ignore_ascii_case("r") {
+            return Ok(Self::Refresh);
+        }
+        if let Some(a) = s.split(' ').next() {
+            let (depth, offset) = if let Some(arg) = s[a.len()..].trim().split(' ').next()
+                && let Some(d) = arg.strip_prefix("d=")
+                && let Ok(depth) = d.parse::<usize>()
+            {
+                (Some(depth), s.substr_range(arg).map_or(0, |r| r.end))
+            } else {
+                (None, a.len())
+            };
+            if a.eq_ignore_ascii_case("ancestors") {
+                return Ok(Self::Ancestors(depth, s[offset..].trim().to_string()));
+            }
+            if a.eq_ignore_ascii_case("children") {
+                return Ok(Self::Children(depth, s[offset..].trim().to_string()));
+            }
+        }
+        Ok(Self::Search(s.to_string()))
     }
 }
 
