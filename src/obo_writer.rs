@@ -12,7 +12,7 @@ pub struct OboFormattingOptions {
     pub format_xref_as_property_value: bool,
     /// Sort the lines and values where possible
     pub sort: bool,
-    /// Fix the cross-id tags to match the proper name as defined in
+    /// Fix the cross-id tags to match the proper name as defined in <https://current.geneontology.org/metadata/GO.xrf_abbs>
     pub fix_cross_ids: bool,
 }
 
@@ -43,9 +43,16 @@ pub fn write<W: Write>(
         }
     }
 
-    for object in &obo.objects {
-        writeln!(writer)?;
-        write_object(&mut writer, object, options)?;
+    if options.sort {
+        for object in obo.objects.iter().sorted_unstable() {
+            writeln!(writer)?;
+            write_object(&mut writer, object, options)?;
+        }
+    } else {
+        for object in &obo.objects {
+            writeln!(writer)?;
+            write_object(&mut writer, object, options)?;
+        }
     }
 
     Ok(())

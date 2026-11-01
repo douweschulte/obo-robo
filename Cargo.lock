@@ -436,7 +436,7 @@ dependencies = [
  "context_error",
  "flate2",
  "itertools",
- "mzcv 0.3.0",
+ "mzcv",
  "ordered-float",
  "roxmltree",
  "serde",
@@ -456,20 +456,6 @@ dependencies = [
  "directories",
  "flate2",
  "serde",
- "sha2",
-]
-
-[[package]]
-name = "mzcv"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d97dae61b4d9d35973769f286a138dc2ec55fc57ef06e5692c3ffc771427c5f7"
-dependencies = [
- "bincode",
- "chrono",
- "context_error",
- "directories",
- "flate2",
  "sha2",
 ]
 
@@ -531,7 +517,7 @@ dependencies = [
  "clap",
  "itertools",
  "mzcore",
- "mzcv 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "mzcv",
 ]
 
 [[package]]

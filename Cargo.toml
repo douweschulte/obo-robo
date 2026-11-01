@@ -9,9 +9,9 @@ chrono = "*"
 clap = {version = "*", features = ["cargo", "derive"]}
 itertools = "*"
 #mzcore = "0.2.0"
-mzcv = "0.3.0"
+#mzcv = "0.3.0"
 mzcore = {path="../mzcore/mzcore"}
-#mzcv = {path="../mzcore/mzcv"}
+mzcv = {path="../mzcore/mzcv"}
 
 [profile.release]
 debug = true
