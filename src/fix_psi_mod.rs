@@ -98,7 +98,7 @@ pub fn fix_psi_mod(
             None
         };
 
-        match origin {
+        match origin.as_ref() {
             Some(origin)
                 if let Some(base) = origin
                     .iter()
@@ -128,6 +128,12 @@ pub fn fix_psi_mod(
             _ => (),
         }
 
+        // Detect if the origin is defined (so not just Xs) to not introduce full formulas when only a diff formula makes sense
+        let defined_origin = origin.as_ref().is_some_and(|o| {
+            o.iter()
+                .any(|o| *o != PsiOrigin::AminoAcid(AminoAcid::Unknown))
+        });
+
         if let Some(formula) = diff_formula {
             if let Some(entry) = obj
                 .xref
@@ -141,7 +147,7 @@ pub fn fix_psi_mod(
                         .expect("Charged or additional mass in formula in PSI-MOD")
                 )
                 .into();
-            } else {
+            } else if defined_origin {
                 obj.xref.push((
                     OboIdentifier(
                         Some("DiffFormula".into()),
@@ -164,7 +170,7 @@ pub fn fix_psi_mod(
                 .find(|x| x.0.0.as_ref().is_some_and(|t| t.as_ref() == "DiffMono"))
             {
                 entry.0.1 = format!("\"{:.6}\"", formula.monoisotopic_mass().value).into();
-            } else {
+            } else if defined_origin {
                 obj.xref.push((
                     OboIdentifier(
                         Some("DiffMono".into()),
@@ -181,7 +187,7 @@ pub fn fix_psi_mod(
                 .find(|x| x.0.0.as_ref().is_some_and(|t| t.as_ref() == "DiffAvg"))
             {
                 entry.0.1 = format!("\"{:.2}\"", formula.average_weight().value).into();
-            } else {
+            } else if defined_origin {
                 obj.xref.push((
                     OboIdentifier(
                         Some("DiffAvg".into()),
@@ -206,7 +212,7 @@ pub fn fix_psi_mod(
                         .expect("Charged or additional mass in formula in PSI-MOD")
                 )
                 .into();
-            } else {
+            } else if defined_origin {
                 obj.xref.push((
                     OboIdentifier(
                         Some("Formula".into()),
@@ -229,7 +235,7 @@ pub fn fix_psi_mod(
                 .find(|x| x.0.0.as_ref().is_some_and(|t| t.as_ref() == "MassMono"))
             {
                 entry.0.1 = format!("\"{:.6}\"", formula.monoisotopic_mass().value).into();
-            } else {
+            } else if defined_origin {
                 obj.xref.push((
                     OboIdentifier(
                         Some("MassMono".into()),
@@ -246,7 +252,7 @@ pub fn fix_psi_mod(
                 .find(|x| x.0.0.as_ref().is_some_and(|t| t.as_ref() == "MassAvg"))
             {
                 entry.0.1 = format!("\"{:.2}\"", formula.average_weight().value).into();
-            } else {
+            } else if defined_origin {
                 obj.xref.push((
                     OboIdentifier(
                         Some("MassAvg".into()),
@@ -320,6 +326,7 @@ pub fn fix_psi_mod(
     errors
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum PsiOrigin {
     AminoAcid(AminoAcid),
     Modification(OboIdentifier),
