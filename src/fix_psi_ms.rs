@@ -2,11 +2,13 @@ use std::collections::HashSet;
 
 use mzcv::{OboIdentifier, OboOntology, OboStanzaType};
 
+use crate::ErrorLevel;
+
 pub fn fix_psi_ms(
     ontology: &mut OboOntology,
     subset: Option<&HashSet<OboIdentifier>>,
     fix_all: bool,
-) -> Result<(), Vec<(OboIdentifier, String)>> {
+) -> Vec<(ErrorLevel, OboIdentifier, String)> {
     let mut errors = Vec::new();
 
     for obj in &mut ontology.objects {
@@ -17,12 +19,13 @@ pub fn fix_psi_ms(
             continue;
         }
         if !obj.lines.contains_key("subset") {
-            errors.push((obj.id.clone(), "Term has no subset defined".to_string()));
+            errors.push((
+                ErrorLevel::Error,
+                obj.id.clone(),
+                "Term has no subset defined".to_string(),
+            ));
         }
     }
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors)
-    }
+
+    errors
 }

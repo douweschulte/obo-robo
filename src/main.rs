@@ -95,6 +95,12 @@ fn main() -> ExitCode {
     let (version_touched, changed) = if let Some(lines) = &mut args.changed_line_numbers {
         lines.sort_unstable();
         let (version, items) = detect_items(lines, &args.path);
+
+        print!("Changed items: {}{nl}", items.iter().sorted().join(", "));
+        if version {
+            print!("Version has been touched{nl}");
+        }
+
         (version, Some(items))
     } else {
         (false, None)
@@ -102,28 +108,7 @@ fn main() -> ExitCode {
 
     match &args.action {
         Action::Lint => {
-            if let Some(changed) = changed.as_ref() {
-                print!("Changed items: {}{nl}", changed.iter().sorted().join(", "));
-                if version_touched {
-                    print!("Version has been touched{nl}");
-                }
-            }
-            let warnings = validate(&file, changed.as_ref());
-
-            if args.gh_pr {
-                print!("<details><summary>{} Warnings</summary>", warnings.len());
-                for (id, warning) in &warnings {
-                    print!(" - {id}: {}<br>", escape(warning));
-                }
-                print!("</details>");
-            } else {
-                if !warnings.is_empty() {
-                    println!("::warning::Some potential problems where detected");
-                }
-                for (id, warning) in &warnings {
-                    println!("::notice::{id}: {warning}");
-                }
-            }
+            print_errors(validate(&file, changed.as_ref()), args.gh_pr);
         }
         Action::Fmt => fmt(
             &file,
@@ -132,23 +117,13 @@ fn main() -> ExitCode {
             args.fix_cross_ids,
         ),
         Action::Fix => {
-            let mut error = false;
-            if let Err(errs) = fix(&mut file, changed.as_ref(), args.fix_all) {
-                if args.gh_pr {
-                    print!("<details><summary>{} Errors</summary>", errs.len());
-                    for (id, err) in errs {
-                        print!(" - {id}: {}<br>", escape(&err));
-                        error = true;
-                    }
-                    print!("</details>");
-                } else {
-                    eprintln!("{} errors:", errs.len());
-                    for (id, err) in errs {
-                        eprintln!("::error::{id}::{err}");
-                        error = true;
-                    }
-                }
-            }
+            let mut errors = validate(&file, changed.as_ref());
+
+            errors.extend(fix(&mut file, changed.as_ref(), args.fix_all));
+            let error = !errors.iter().all(|(l, _, _)| *l == ErrorLevel::Warning);
+            
+            print_errors(errors, args.gh_pr);
+
             if let Some(author) = args.bump {
                 if let Some([a, b, c]) = file
                     .data_version
@@ -261,10 +236,56 @@ fn fmt(ontology: &OboOntology, path: impl AsRef<Path>, sort: bool, fix_cross_ids
     .unwrap();
 }
 
+fn print_errors(errors: Vec<(ErrorLevel, OboIdentifier, String)>, gh_pr: bool) {
+    for (level, mut items) in errors.into_iter().map(|(l, id, msg)| (l, (id, msg))).into_group_map().into_iter().sorted_by(|a, b| a.cmp(b).reverse()) {
+        items.sort_unstable();
+        if gh_pr {
+            print!("<details><summary>{} {}s</summary>", items.len(), level.name());
+            for (id, err) in items {
+                print!(" - {id}: {}<br>", escape(&err));
+            }
+            print!("</details>");
+        } else {
+            eprintln!("{} {}s:", items.len(), level.name());
+            for (id, err) in items {
+                eprintln!("::{}::{id}::{err}", level.github_name());
+            }
+        }
+    } 
+}
+
+/// The level of an error
+#[derive(Clone, Copy, Hash, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum ErrorLevel {
+    /// Just a warning, would be good to look into but can be safely ignored
+    Warning,
+    /// An error, likely makes this item incorrect
+    Error,
+    /// An error that makes the obo structure invalid
+    InvalidatingError,
+}
+
+impl ErrorLevel {
+    const fn github_name(self) -> &'static str {
+        match self {
+            Self::Warning => "::notice::",
+            Self::Error | Self::InvalidatingError => "::error::",
+        }
+    }
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Warning => "Warning",
+            Self::Error => "Error",
+            Self::InvalidatingError => "Invalidating Error"
+        }
+    }
+}
+
 fn validate(
     ontology: &OboOntology,
     subset: Option<&HashSet<OboIdentifier>>,
-) -> Vec<(OboIdentifier, String)> {
+) -> Vec<(ErrorLevel, OboIdentifier, String)> {
     let mut warnings = Vec::new();
     let mut names = HashSet::new();
     let mut definitions = HashSet::new();
@@ -296,25 +317,45 @@ fn validate(
 
         // Check for duplicate IDs
         if !ids.insert(obj.id.clone()) {
-            warnings.push((obj.id.clone(), "Duplicate ID".to_string()));
+            warnings.push((
+                ErrorLevel::InvalidatingError,
+                obj.id.clone(),
+                "Duplicate ID".to_string(),
+            ));
         }
 
         // Check for duplicate names
         if let Some(name) = obj.lines.get("name") {
             if name.len() != 1 {
-                warnings.push((obj.id.clone(), "Too many names defined".to_string()));
+                warnings.push((
+                    ErrorLevel::InvalidatingError,
+                    obj.id.clone(),
+                    "Too many names defined".to_string(),
+                ));
             }
             if !names.insert(name[0].0.as_ref()) {
-                warnings.push((obj.id.clone(), format!("Duplicate name: '{}'", name[0].0)));
+                warnings.push((
+                    ErrorLevel::InvalidatingError,
+                    obj.id.clone(),
+                    format!("Duplicate name: '{}'", name[0].0),
+                ));
             }
         } else {
-            warnings.push((obj.id.clone(), "No name defined".to_string()));
+            warnings.push((
+                ErrorLevel::Warning,
+                obj.id.clone(),
+                "No name defined".to_string(),
+            ));
         }
 
         if let Some((def, cross_ids, _, _)) = &obj.definition {
             // Check for duplicate definitions
             if !definitions.insert(def.as_ref()) {
-                warnings.push((obj.id.clone(), format!("Duplicate definition: '{def}'")));
+                warnings.push((
+                    ErrorLevel::Warning,
+                    obj.id.clone(),
+                    format!("Duplicate definition: '{def}'"),
+                ));
             }
 
             // Validate that the cross-ids are valid and written properly
@@ -328,23 +369,26 @@ fn validate(
                     if let CrossId::Other(o) = &id
                         && o.contains(':')
                     {
-                        warnings.push((obj.id.clone(), format!("Unknown cross-id: {o}")));
-                    } else if !matches!(
-                        id,
-                        CrossId::URL(_, _) | CrossId::ChemicalBook(_) | CrossId::ChemSpider(_)
-                    ) && id.to_string() != full
-                    {
                         warnings.push((
+                            ErrorLevel::Warning,
                             obj.id.clone(),
-                            format!("Not normalised cross-id: '{full}', cleaned is: '{id}'"),
+                            format!("Unknown cross-id: {o}"),
                         ));
                     }
                 } else {
-                    warnings.push((obj.id.clone(), format!("Invalid cross-id type: {full}")));
+                    warnings.push((
+                        ErrorLevel::Warning,
+                        obj.id.clone(),
+                        format!("Invalid cross-id type: {full}"),
+                    ));
                 }
             }
         } else {
-            warnings.push((obj.id.clone(), "No definition".to_string()));
+            warnings.push((
+                ErrorLevel::Warning,
+                obj.id.clone(),
+                "No definition".to_string(),
+            ));
         }
 
         // Check for duplicate synonyms
@@ -354,8 +398,12 @@ fn validate(
             }
             if !names.insert(synonym.synonym.as_ref()) {
                 warnings.push((
+                    ErrorLevel::Warning,
                     obj.id.clone(),
-                    format!("Duplicate exact synonym: '{}'", synonym.synonym),
+                    format!(
+                        "Duplicate exact synonym (case insensitive): '{}'",
+                        synonym.synonym
+                    ),
                 ));
             }
         }
@@ -383,13 +431,18 @@ fn validate(
                 ]
                 .contains(&line.as_ref())
                 {
-                    warnings.push((obj.id.clone(), format!("Invalid line type: {line}")));
+                    warnings.push((
+                        ErrorLevel::Error,
+                        obj.id.clone(),
+                        format!("Invalid line type: {line}"),
+                    ));
                 }
             }
         }
 
         if obj.obsolete && !obj.relationship.is_empty() {
             warnings.push((
+                ErrorLevel::InvalidatingError,
                 obj.id.clone(),
                 "This obsoleted term has relationships".to_string(),
             ));
@@ -402,6 +455,7 @@ fn validate(
                 && !defined_typedefs.contains(reltype.as_ref())
             {
                 warnings.push((
+                    ErrorLevel::InvalidatingError,
                     obj.id.clone(),
                     format!("Undefined relationship type was referenced: '{reltype}'"),
                 ));
@@ -414,6 +468,7 @@ fn validate(
                     && *comment != relation.lines["name"][0].0
                 {
                     warnings.push((
+                            ErrorLevel::Error, 
                             obj.id.clone(),
                             format!("This relationship comment looks suspicious: name is '{}' comment is '{comment}'", relation.lines["name"][0].0),
                         ));
@@ -424,6 +479,7 @@ fn validate(
 
                 if relation.obsolete {
                     warnings.push((
+                        ErrorLevel::Error, 
                         obj.id.clone(),
                         format!(
                             "This related term is marked obsolete: '{}|{}'",
@@ -433,6 +489,7 @@ fn validate(
                 }
             } else {
                 warnings.push((
+                    ErrorLevel::InvalidatingError, 
                     obj.id.clone(),
                     format!("Referenced relation does not exist in this file: {rel}"),
                 ));
@@ -475,6 +532,7 @@ fn validate(
             for line in lines {
                 if !defined_subsets.contains(line.0.as_ref()) {
                     warnings.push((
+                        ErrorLevel::InvalidatingError, 
                         obj.id.clone(),
                         format!("Undefined subset was referenced: '{}'", line.0),
                     ));
@@ -486,6 +544,7 @@ fn validate(
                 && !defined_synonyms.contains(t)
             {
                 warnings.push((
+                    ErrorLevel::InvalidatingError, 
                     obj.id.clone(),
                     format!("Undefined synonym was referenced: '{t}'"),
                 ));
@@ -500,16 +559,16 @@ fn fix(
     ontology: &mut OboOntology,
     subset: Option<&HashSet<OboIdentifier>>,
     fix_all: bool,
-) -> Result<(), Vec<(OboIdentifier, String)>> {
+) -> Vec<(ErrorLevel, OboIdentifier, String)> {
     if let Some((_, name, _, _)) = ontology.headers.iter().find(|h| h.0.as_ref() == "ontology") {
         match name.as_ref() {
             "xlmod" => fix_xlmod::fix_xlmod(ontology, subset, fix_all),
             "mod" => fix_psi_mod::fix_psi_mod(ontology, subset, fix_all),
             "ms" => fix_psi_ms::fix_psi_ms(ontology, subset, fix_all),
-            _ => Ok(()),
+            _ => Vec::new(),
         }
     } else {
-        Ok(())
+        Vec::new()
     }
 }
 

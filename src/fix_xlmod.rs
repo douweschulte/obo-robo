@@ -3,11 +3,13 @@ use std::collections::HashSet;
 use mzcore::chemistry::MolecularFormula;
 use mzcv::{OboIdentifier, OboOntology, OboValue};
 
+use crate::ErrorLevel;
+
 pub fn fix_xlmod(
     ontology: &mut OboOntology,
     subset: Option<&HashSet<OboIdentifier>>,
     fix_all: bool,
-) -> Result<(), Vec<(OboIdentifier, String)>> {
+) -> Vec<(ErrorLevel, OboIdentifier, String)> {
     let mut errors = Vec::new();
     for obj in &mut ontology.objects {
         if !fix_all && subset.is_some_and(|s| !s.contains(&obj.id)) {
@@ -22,6 +24,7 @@ pub fn fix_xlmod(
         if let Some(entry) = obj.property_values.get_mut(formula_key) {
             if entry.len() != 1 {
                 errors.push((
+                    ErrorLevel::Error,
                     obj.id.clone(),
                     format!("Too many {formula_key}s, can only have 1"),
                 ));
@@ -43,7 +46,11 @@ pub fn fix_xlmod(
                         )],
                     );
                 }
-                Err(err) => errors.push((obj.id.clone(), format!("Invalid {formula_key}: {err}"))),
+                Err(err) => errors.push((
+                    ErrorLevel::Error,
+                    obj.id.clone(),
+                    format!("Invalid {formula_key}: {err}"),
+                )),
             }
         }
 
@@ -58,7 +65,11 @@ pub fn fix_xlmod(
                         );
                     }
                     Err(err) => {
-                        errors.push((obj.id.clone(), format!("Invalid neutralLossFormula: {err}")));
+                        errors.push((
+                            ErrorLevel::Error,
+                            obj.id.clone(),
+                            format!("Invalid neutralLossFormula: {err}"),
+                        ));
                     }
                 }
             }
@@ -67,17 +78,23 @@ pub fn fix_xlmod(
         if let Some(entry) = obj.property_values.get_mut("reactionSites") {
             if entry.len() != 1 {
                 errors.push((
+                    ErrorLevel::Error,
                     obj.id.clone(),
                     "Too many reactionSites entries, can only have 1".to_string(),
                 ));
             }
             if let OboValue::Integer(n, _) = entry[0].0 {
                 if n < 0 {
-                    errors.push((obj.id.clone(), "reactionSites is negative".to_string()));
+                    errors.push((
+                        ErrorLevel::Error,
+                        obj.id.clone(),
+                        "reactionSites is negative".to_string(),
+                    ));
                 } else {
                     entry[0].0 = OboValue::Integer(n, "nonNegativeInteger");
                     if n > 10 {
                         errors.push((
+                            ErrorLevel::Error,
                             obj.id.clone(),
                             "Too high number of reactionSites, has to be below 10".to_string(),
                         ));
@@ -89,6 +106,7 @@ pub fn fix_xlmod(
         if let Some(entry) = obj.property_values.get_mut("hydrophilicPEGchain") {
             if entry.len() != 1 {
                 errors.push((
+                    ErrorLevel::Error,
                     obj.id.clone(),
                     "Too many hydrophilicPEGchain entries, can only have 1".to_string(),
                 ));
@@ -96,6 +114,7 @@ pub fn fix_xlmod(
             if let OboValue::Integer(n, _) = entry[0].0 {
                 if n < 0 {
                     errors.push((
+                        ErrorLevel::Error,
                         obj.id.clone(),
                         "hydrophilicPEGchain is negative".to_string(),
                     ));
@@ -106,9 +125,5 @@ pub fn fix_xlmod(
         }
     }
 
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors)
-    }
+    errors
 }
