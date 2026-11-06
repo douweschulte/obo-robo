@@ -4,7 +4,7 @@ use std::{
 };
 
 use mzcore::{
-    chemistry::{AmbiguousMolecule, MolecularFormula},
+    chemistry::{AmbiguousMolecule, MassOutputType, MolecularFormula},
     sequence::AminoAcid,
 };
 use mzcv::{OboIdentifier, OboOntology};
@@ -76,6 +76,70 @@ pub fn fix_psi_mod(
             None
         };
 
+        let smiles = if let Some(entry) = obj
+            .xref
+            .iter()
+            .find(|x| x.0.0.as_ref().is_some_and(|t| t.as_ref() == "Smiles"))
+        {
+            let trimmed = entry.0.1.trim().trim_matches('\"');
+            match mzcore::chemistry::StructuralFormula::from_smiles(trimmed) {
+                Ok(structure) => structure.composition().map(|mut f| {
+                    let c = f.charge();
+                    f.set_charge(mzcore::system::isize::Charge::default());
+                    (f, c)
+                }),
+                Err(err) => {
+                    errors.push((
+                        ErrorLevel::Error,
+                        obj.id.clone(),
+                        format!("Invalid Smiles: {err}"),
+                    ));
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let mut charge: Option<mzcore::system::isize::Charge> = if let Some(entry) = obj
+            .xref
+            .iter_mut()
+            .find(|x| x.0.0.as_ref().is_some_and(|t| t.as_ref() == "FormalCharge"))
+        {
+            let trimmed = entry.0.1.trim().trim_matches('\"');
+            let num = if let Some(num) = trimmed.strip_suffix("-") {
+                Some((num, true))
+            } else if let Some(num) = trimmed.strip_suffix("+") {
+                Some((num, false))
+            } else {
+                errors.push((
+                    ErrorLevel::Error,
+                    obj.id.clone(),
+                    "Invalid FormalCharge".to_string(),
+                ));
+                None
+            };
+            if let Some((num, negative)) = num {
+                match num.parse::<u32>() {
+                    Ok(num) => Some(mzcore::system::isize::Charge::new::<mzcore::system::e>(
+                        num as isize * if negative { -1 } else { 1 },
+                    )),
+                    Err(err) => {
+                        errors.push((
+                            ErrorLevel::Error,
+                            obj.id.clone(),
+                            format!("Invalid FormalCharge: {err}"),
+                        ));
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         let origin: Option<Vec<PsiOrigin>> = if let Some(entry) = obj
             .xref
             .iter_mut()
@@ -98,34 +162,101 @@ pub fn fix_psi_mod(
             None
         };
 
-        match origin.as_ref() {
-            Some(origin)
-                if let Some(base) = origin
-                    .iter()
-                    .try_fold(MolecularFormula::default(), |acc, o| {
-                        o.full(&formulas).map(|b| acc + b)
-                    }) =>
-            {
-                match (&diff_formula, &full_formula) {
-                    (Some(d), Some(f)) => {
-                        let s = &base + d;
-                        if s != *f {
-                            errors.push((ErrorLevel::Error,obj.id.clone(), format!(
-                                    "DiffFormula '{d}' plus the origins '{base}' (summed '{s}') do not match with the Formula '{f}' difference is '{}' (summed - Formula)",
-                                    &s - f
-                                )));
-                        }
-                    }
-                    (Some(d), None) => {
-                        full_formula = Some(base + d);
-                    }
-                    (None, Some(f)) => {
-                        diff_formula = Some(f - base);
-                    }
-                    (None, None) => (),
+        match (
+            origin.as_ref().and_then(|o| {
+                o.iter().try_fold(MolecularFormula::default(), |acc, o| {
+                    o.full(&formulas).map(|b| acc + b)
+                })
+            }),
+            &diff_formula,
+            &full_formula,
+            &smiles,
+        ) {
+            (Some(base), Some(d), Some(f), Some((s, _))) => {
+                let reconstructed = &base + d;
+                if reconstructed != *f {
+                    errors.push((ErrorLevel::Error,obj.id.clone(), format!(
+                        "DiffFormula '{d}' plus the origins '{base}' (summed '{reconstructed}') do not match with the Formula '{f}' difference is '{}' (summed - Formula)",
+                        &reconstructed - f
+                    )));
+                }
+                if reconstructed != *s {
+                    errors.push((ErrorLevel::Error,obj.id.clone(), format!(
+                        "DiffFormula '{d}' plus the origins '{base}' (summed '{reconstructed}') do not match with the Smiles '{s}' difference is '{}' (summed - Smiles)",
+                        &reconstructed - s
+                    )));
+                }
+                if *f != *s {
+                    errors.push((ErrorLevel::Error,obj.id.clone(), format!(
+                        "Formula '{f}' do not match with the Smiles '{s}' difference is '{}' (Formula - Smiles)",
+                        f - s
+                    )));
                 }
             }
-            _ => (),
+            (Some(base), Some(d), Some(f), None) => {
+                let reconstructed = &base + d;
+                if reconstructed != *f {
+                    errors.push((ErrorLevel::Error,obj.id.clone(), format!(
+                        "DiffFormula '{d}' plus the origins '{base}' (summed '{reconstructed}') do not match with the Formula '{f}' difference is '{}' (summed - Formula)",
+                        &reconstructed - f
+                    )));
+                }
+            }
+            (Some(base), Some(d), None, Some((s, _))) => {
+                let reconstructed = &base + d;
+                if reconstructed != *s {
+                    errors.push((ErrorLevel::Error,obj.id.clone(), format!(
+                        "DiffFormula '{d}' plus the origins '{base}' (summed '{reconstructed}') do not match with the Smiles '{s}' difference is '{}' (summed - Smiles)",
+                        &reconstructed - s
+                    )));
+                }
+                full_formula = Some(s.clone());
+            }
+            (Some(base), Some(d), None, None) => {
+                full_formula = Some(base + d);
+            }
+            (Some(base), None, Some(f), Some((s, _))) => {
+                diff_formula = Some(f - base);
+                if *f != *s {
+                    errors.push((ErrorLevel::Error,obj.id.clone(), format!(
+                        "Formula '{f}' do not match with the Smiles '{s}' difference is '{}' (Formula - Smiles)",
+                        f - s
+                    )));
+                }
+            }
+            (Some(base), None, Some(f), None) => {
+                diff_formula = Some(f - base);
+            }
+            (Some(base), None, None, Some((s, _))) => {
+                diff_formula = Some(s - base);
+                full_formula = Some(s.clone());
+            }
+            (_, _, Some(f), Some((s, _))) => {
+                if *f != *s {
+                    errors.push((ErrorLevel::Error,obj.id.clone(), format!(
+                        "Formula '{f}' do not match with the Smiles '{s}' difference is '{}' (Formula - Smiles)",
+                        f - s
+                    )));
+                }
+            }
+            (..) => (),
+        }
+
+        if let Some((_, smiles_c)) = smiles {
+            if let Some(c) = charge {
+                if smiles_c != c {
+                    errors.push((
+                        ErrorLevel::Error,
+                        obj.id.clone(),
+                        format!(
+                            "The FormalCharge ({}) differs from the Smiles charge ({})",
+                            c.value, smiles_c.value
+                        ),
+                    ));
+                }
+            } else {
+                charge = Some(smiles_c);
+            }
         }
 
         // Detect if the origin is defined (so not just Xs) to not introduce full formulas when only a diff formula makes sense
@@ -135,134 +266,79 @@ pub fn fix_psi_mod(
         });
 
         if let Some(formula) = diff_formula {
-            if let Some(entry) = obj
-                .xref
-                .iter_mut()
-                .find(|x| x.0.0.as_ref().is_some_and(|t| t.as_ref() == "DiffFormula"))
-            {
-                entry.0.1 = format!(
+            set_xref(
+                &mut obj.xref,
+                "DiffFormula",
+                format!(
                     "\"{}\"",
                     formula
                         .hill_notation_psi_mod()
                         .expect("Charged or additional mass in formula in PSI-MOD")
                 )
-                .into();
-            } else if defined_origin {
-                obj.xref.push((
-                    OboIdentifier(
-                        Some("DiffFormula".into()),
-                        format!(
-                            "\"{}\"",
-                            formula
-                                .hill_notation_psi_mod()
-                                .expect("Charged or additional mass in formula in PSI-MOD")
-                        )
-                        .into(),
-                    ),
-                    Vec::new(),
-                    None,
-                ));
-            }
-
-            if let Some(entry) = obj
-                .xref
-                .iter_mut()
-                .find(|x| x.0.0.as_ref().is_some_and(|t| t.as_ref() == "DiffMono"))
-            {
-                entry.0.1 = format!("\"{:.6}\"", formula.monoisotopic_mass().value).into();
-            } else if defined_origin {
-                obj.xref.push((
-                    OboIdentifier(
-                        Some("DiffMono".into()),
-                        format!("\"{:.6}\"", formula.monoisotopic_mass().value).into(),
-                    ),
-                    Vec::new(),
-                    None,
-                ));
-            }
-
-            if let Some(entry) = obj
-                .xref
-                .iter_mut()
-                .find(|x| x.0.0.as_ref().is_some_and(|t| t.as_ref() == "DiffAvg"))
-            {
-                entry.0.1 = format!("\"{:.2}\"", formula.average_weight().value).into();
-            } else if defined_origin {
-                obj.xref.push((
-                    OboIdentifier(
-                        Some("DiffAvg".into()),
-                        format!("\"{:.2}\"", formula.average_weight().value).into(),
-                    ),
-                    Vec::new(),
-                    None,
-                ));
-            }
+                .into(),
+                false,
+                !defined_origin,
+            );
+            set_xref(
+                &mut obj.xref,
+                "DiffMono",
+                format!("\"{:.6}\"", formula.monoisotopic_mass().value).into(),
+                false,
+                !defined_origin,
+            );
+            set_xref(
+                &mut obj.xref,
+                "DiffAvg",
+                format!("\"{:.2}\"", formula.average_weight().value).into(),
+                false,
+                !defined_origin,
+            );
         }
 
         if let Some(formula) = full_formula {
-            if let Some(entry) = obj
-                .xref
-                .iter_mut()
-                .find(|x| x.0.0.as_ref().is_some_and(|t| t.as_ref() == "Formula"))
-            {
-                entry.0.1 = format!(
+            set_xref(
+                &mut obj.xref,
+                "Formula",
+                format!(
                     "\"{}\"",
                     formula
                         .hill_notation_psi_mod()
                         .expect("Charged or additional mass in formula in PSI-MOD")
                 )
-                .into();
-            } else if defined_origin {
-                obj.xref.push((
-                    OboIdentifier(
-                        Some("Formula".into()),
-                        format!(
-                            "\"{}\"",
-                            formula
-                                .hill_notation_psi_mod()
-                                .expect("Charged or additional mass in formula in PSI-MOD")
-                        )
-                        .into(),
-                    ),
-                    Vec::new(),
-                    None,
-                ));
-            }
-
-            if let Some(entry) = obj
-                .xref
-                .iter_mut()
-                .find(|x| x.0.0.as_ref().is_some_and(|t| t.as_ref() == "MassMono"))
-            {
-                entry.0.1 = format!("\"{:.6}\"", formula.monoisotopic_mass().value).into();
-            } else if defined_origin {
-                obj.xref.push((
-                    OboIdentifier(
-                        Some("MassMono".into()),
-                        format!("\"{:.6}\"", formula.monoisotopic_mass().value).into(),
-                    ),
-                    Vec::new(),
-                    None,
-                ));
-            }
-
-            if let Some(entry) = obj
-                .xref
-                .iter_mut()
-                .find(|x| x.0.0.as_ref().is_some_and(|t| t.as_ref() == "MassAvg"))
-            {
-                entry.0.1 = format!("\"{:.2}\"", formula.average_weight().value).into();
-            } else if defined_origin {
-                obj.xref.push((
-                    OboIdentifier(
-                        Some("MassAvg".into()),
-                        format!("\"{:.2}\"", formula.average_weight().value).into(),
-                    ),
-                    Vec::new(),
-                    None,
-                ));
-            }
+                .into(),
+                false,
+                !defined_origin,
+            );
+            set_xref(
+                &mut obj.xref,
+                "MassMono",
+                format!("\"{:.6}\"", formula.monoisotopic_mass().value).into(),
+                false,
+                !defined_origin,
+            );
+            set_xref(
+                &mut obj.xref,
+                "MassAvg",
+                format!("\"{:.2}\"", formula.average_weight().value).into(),
+                false,
+                !defined_origin,
+            );
             formulas.insert(obj.id.clone(), formula.clone());
+        }
+
+        if let Some(charge) = charge {
+            set_xref(
+                &mut obj.xref,
+                "FormalCharge",
+                format!(
+                    "{}{}",
+                    charge.value.abs(),
+                    if charge.value > 0 { '+' } else { '-' }
+                )
+                .into(),
+                charge.value == 0,
+                true,
+            );
         }
 
         // TODO: detect missing relationships like 'MOD:00842|(13)C labeled residue' 'MOD:00843|(15)N labeled residue' and 'MOD:00902|modified L-arginine residue'
@@ -324,6 +400,28 @@ pub fn fix_psi_mod(
     }
 
     errors
+}
+
+/// Set the specified property value (in xref because PSI-MOD), remove the property entirely if `remove` is set to true, or if `insert` is true insert the property if it is not there already.
+fn set_xref(
+    xref: &mut Vec<(OboIdentifier, Vec<(Box<str>, Box<str>)>, Option<Box<str>>)>,
+    name: &'static str,
+    value: Box<str>,
+    remove: bool,
+    insert: bool,
+) {
+    if remove {
+        xref.retain(|x| x.0.0.as_ref().is_some_and(|t| t.as_ref() != name))
+    } else {
+        if let Some(entry) = xref
+            .iter_mut()
+            .find(|x| x.0.0.as_ref().is_some_and(|t| t.as_ref() == name))
+        {
+            entry.0.1 = value;
+        } else if insert {
+            xref.push((OboIdentifier(Some(name.into()), value), Vec::new(), None));
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
